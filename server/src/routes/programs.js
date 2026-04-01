@@ -74,7 +74,8 @@ router.get('/:id/chunks', async (req, res, next) => {
 // POST /api/programs/upload
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
-    const program = await uploadAndStartAnalysis(req.file, sseEmitters)
+    const applicationId = req.body.application_id || null
+    const program = await uploadAndStartAnalysis(req.file, sseEmitters, applicationId)
     res.status(202).json({ id: program.id, status: program.status })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })

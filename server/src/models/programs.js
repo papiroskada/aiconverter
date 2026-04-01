@@ -1,11 +1,11 @@
 import pool from '../db/client.js'
 
-export async function createProgram({ name, file_path = null, status = 'pending' }) {
+export async function createProgram({ name, file_path = null, status = 'pending', application_id = null }) {
   const { rows } = await pool.query(
-    `INSERT INTO programs (name, file_path, status)
-     VALUES ($1, $2, $3)
+    `INSERT INTO programs (name, file_path, status, application_id)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [name, file_path, status]
+    [name, file_path, status, application_id]
   )
   return rows[0]
 }

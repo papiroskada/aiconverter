@@ -3,13 +3,13 @@ import { BaseProvider } from './base.js'
 import { INTERFACE_PROMPT, RULES_PROMPT, DIAGRAM_PROMPT } from '../prompts.js'
 
 export class OpenAIProvider extends BaseProvider {
-  constructor() {
+  constructor(config = {}) {
     super()
-    this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  }
-
-  #model(envVar, defaultModel) {
-    return process.env[envVar] || defaultModel
+    const apiKey = config.openai_api_key || process.env.OPENAI_API_KEY
+    this.client = new OpenAI({ apiKey })
+    this.modelInterface = config.openai_model_interface || process.env.OPENAI_MODEL_INTERFACE || 'gpt-4o'
+    this.modelRules     = config.openai_model_rules    || process.env.OPENAI_MODEL_RULES    || 'gpt-4o-mini'
+    this.modelDiagram   = config.openai_model_diagram  || process.env.OPENAI_MODEL_DIAGRAM  || 'gpt-4o-mini'
   }
 
   async #callOpenAI(prompt, maxTokens, model) {
@@ -23,20 +23,17 @@ export class OpenAIProvider extends BaseProvider {
   }
 
   async extractInterface(context) {
-    const model = this.#model('OPENAI_MODEL_INTERFACE', 'gpt-4o')
-    return this.#callOpenAI(INTERFACE_PROMPT(context), 4096, model)
+    return this.#callOpenAI(INTERFACE_PROMPT(context), 4096, this.modelInterface)
   }
 
   async extractRules(context) {
-    const model = this.#model('OPENAI_MODEL_RULES', 'gpt-4o-mini')
-    const result = await this.#callOpenAI(RULES_PROMPT(context), 4096, model)
+    const result = await this.#callOpenAI(RULES_PROMPT(context), 4096, this.modelRules)
     return result.paragraphRules ?? []
   }
 
   async generateDiagram(summary) {
-    const model = this.#model('OPENAI_MODEL_DIAGRAM', 'gpt-4o-mini')
     const completion = await this.client.chat.completions.create({
-      model,
+      model: this.modelDiagram,
       max_tokens: 1024,
       messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }],
     })

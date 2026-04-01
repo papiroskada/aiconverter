@@ -3,13 +3,13 @@ import { BaseProvider } from './base.js'
 import { INTERFACE_PROMPT, RULES_PROMPT, DIAGRAM_PROMPT } from '../prompts.js'
 
 export class ClaudeProvider extends BaseProvider {
-  constructor() {
+  constructor(config = {}) {
     super()
-    this.client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  }
-
-  #model(envVar, defaultModel) {
-    return process.env[envVar] || defaultModel
+    const apiKey = config.claude_api_key || process.env.ANTHROPIC_API_KEY
+    this.client = new Anthropic({ apiKey })
+    this.modelInterface = config.claude_model_interface || process.env.CLAUDE_MODEL_INTERFACE || 'claude-sonnet-4-6'
+    this.modelRules     = config.claude_model_rules    || process.env.CLAUDE_MODEL_RULES    || 'claude-haiku-4-5-20251001'
+    this.modelDiagram   = config.claude_model_diagram  || process.env.CLAUDE_MODEL_DIAGRAM  || 'claude-haiku-4-5-20251001'
   }
 
   async #callClaude(prompt, maxTokens, model) {
@@ -24,20 +24,17 @@ export class ClaudeProvider extends BaseProvider {
   }
 
   async extractInterface(context) {
-    const model = this.#model('CLAUDE_MODEL_INTERFACE', 'claude-sonnet-4-6')
-    return this.#callClaude(INTERFACE_PROMPT(context), 4096, model)
+    return this.#callClaude(INTERFACE_PROMPT(context), 4096, this.modelInterface)
   }
 
   async extractRules(context) {
-    const model = this.#model('CLAUDE_MODEL_RULES', 'claude-haiku-4-5-20251001')
-    const result = await this.#callClaude(RULES_PROMPT(context), 4096, model)
+    const result = await this.#callClaude(RULES_PROMPT(context), 4096, this.modelRules)
     return result.paragraphRules ?? []
   }
 
   async generateDiagram(summary) {
-    const model = this.#model('CLAUDE_MODEL_DIAGRAM', 'claude-haiku-4-5-20251001')
     const message = await this.client.messages.create({
-      model,
+      model: this.modelDiagram,
       max_tokens: 1024,
       messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }],
     })
