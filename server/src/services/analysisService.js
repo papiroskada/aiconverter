@@ -125,9 +125,9 @@ export async function reanalyze(programId, sseEmitters) {
   if (!program) throw Object.assign(new Error('Not found'), { status: 404 })
   if (program.status === 'analyzing') throw Object.assign(new Error('Already analyzing'), { status: 409 })
 
+  if (!program.file_path) throw Object.assign(new Error('No source file found'), { status: 404 })
   await updateProgramStatus(programId, 'analyzing')
-  const filePath = join(UPLOADS_DIR, `${program.id}.cbl`)
-  const cobolText = readFileSync(filePath, 'utf8')
+  const cobolText = readFileSync(program.file_path, 'utf8')
   const existingChunks = await getChunksByProgramId(programId)
   const settings = await getSettings()
   const emit = makeEmit(programId, sseEmitters)
