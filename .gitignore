@@ -1,0 +1,27 @@
+# Dependencies
+server/node_modules/
+client/node_modules/
+
+# Uploads
+server/uploads/
+
+# Env
+server/.env
+
+# Build
+client/dist/
+
+# Brainstorm artifacts
+.superpowers/
+
+# Worktrees
+.worktrees/
+
+# OS
+.DS_Store
+
+# Vite cache
+.vite/
+
+# Test COBOL files in root
+*.cbl
