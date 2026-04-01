@@ -27,7 +27,13 @@ export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
   ])
 
   const pending = programs.filter(p => p.status !== 'analyzed')
-  if (pending.length === 0) return
+  if (pending.length === 0) {
+    const emitters = appSseEmitters.get(applicationId) || []
+    for (const res of emitters) {
+      res.write(`event: done\ndata: ${JSON.stringify({ applicationId })}\n\n`)
+    }
+    return
+  }
 
   await updateApplicationStatus(applicationId, 'analyzing')
 
