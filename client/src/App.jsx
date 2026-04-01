@@ -1,9 +1,11 @@
 import { useState, useCallback } from 'react'
 import ProgramGraph from './components/Graph/ProgramGraph.jsx'
-import UploadButton from './components/Upload/UploadButton.jsx'
+import UploadControls from './components/Upload/UploadControls.jsx'
 import DetailPanel from './components/Panel/DetailPanel.jsx'
+import SettingsDrawer from './components/Settings/SettingsDrawer.jsx'
 import { usePrograms } from './hooks/usePrograms.js'
 import { useSSE } from './hooks/useSSE.js'
+import { useAppSSE } from './hooks/useAppSSE.js'
 
 export default function App() {
   const { nodes, edges, loading, refresh, markAnalyzing, markAnalyzed, onNodesChange } = usePrograms()
@@ -12,22 +14,37 @@ export default function App() {
   const [progressEvents, setProgressEvents] = useState([])
   const [progressForId, setProgressForId] = useState(null)
   const [panelRefreshTrigger, setPanelRefreshTrigger] = useState(0)
+  const [batchAppId, setBatchAppId] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
+  // Single-file SSE (existing)
   useSSE(analyzingId, (event, data) => {
-    if (event === 'progress') {
-      setProgressEvents(prev => [...prev, data])
-    }
+    if (event === 'progress') setProgressEvents(prev => [...prev, data])
     if (event === 'done') {
       markAnalyzed(analyzingId)
       setAnalyzingId(null)
-      setProgressForId(null)  // clear — progress UI disappears after success
+      setProgressForId(null)
       setProgressEvents([])
       setPanelRefreshTrigger(t => t + 1)
       refresh()
     }
     if (event === 'failed') {
       setAnalyzingId(null)
-      // Do NOT clear progressForId or progressEvents — DetailPanel shows the final error log
+      refresh()
+    }
+  })
+
+  // Batch/application SSE
+  useAppSSE(batchAppId, (event, data) => {
+    if (event === 'progress' && data.programId) {
+      if (data.stage === 'analyzing') markAnalyzing(data.programId)
+    }
+    if (event === 'done') {
+      setBatchAppId(null)
+      refresh()
+    }
+    if (event === 'failed') {
+      setBatchAppId(null)
       refresh()
     }
   })
@@ -35,10 +52,15 @@ export default function App() {
   const handleUploaded = useCallback(async (program) => {
     setAnalyzingId(program.id)
     setProgressForId(program.id)
-    setProgressEvents([])  // clear stale events from any previous run
+    setProgressEvents([])
     await refresh()
     markAnalyzing(program.id)
   }, [markAnalyzing, refresh])
+
+  const handleBatchStarted = useCallback(async (appId) => {
+    setBatchAppId(appId)
+    await refresh()
+  }, [refresh])
 
   const handleDeleted = useCallback(async (programId) => {
     if (selectedId === programId) setSelectedId(null)
@@ -60,7 +82,23 @@ export default function App() {
         onNodeClick={(node) => { if (!node.data.isPhantom) setSelectedId(node.id) }}
         onNodesChange={onNodesChange}
       />
-      <UploadButton onUploaded={handleUploaded} />
+
+      {/* Settings gear icon */}
+      <button
+        onClick={() => setSettingsOpen(true)}
+        style={{
+          position: 'absolute', top: 16, right: 16, zIndex: 10,
+          background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+          color: '#94a3b8', fontSize: 18, width: 36, height: 36, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+        title="Settings"
+      >
+        ⚙
+      </button>
+
+      <UploadControls onUploaded={handleUploaded} onBatchStarted={handleBatchStarted} />
+
       <DetailPanel
         programId={selectedId}
         progressForId={progressForId}
@@ -70,6 +108,8 @@ export default function App() {
         onNavigate={(id) => setSelectedId(id)}
         onDeleted={handleDeleted}
       />
+
+      <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }
