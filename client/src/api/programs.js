@@ -12,9 +12,10 @@ export async function fetchProgram(id) {
   return res.json()
 }
 
-export async function uploadFile(file) {
+export async function uploadFile(file, applicationId = null) {
   const form = new FormData()
   form.append('file', file)
+  if (applicationId) form.append('application_id', applicationId)
   const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form })
   if (!res.ok) throw new Error('Upload failed')
   return res.json()
