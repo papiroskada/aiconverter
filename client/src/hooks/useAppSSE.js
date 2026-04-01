@@ -18,6 +18,11 @@ export function useAppSSE(applicationId, onEvent) {
 
     ;['progress', 'done', 'failed'].forEach(event => es.addEventListener(event, handle))
 
+    es.onerror = () => {
+      onEventRef.current('error', null)
+      es.close()
+    }
+
     return () => es.close()
   }, [applicationId])
 }
