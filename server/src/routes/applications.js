@@ -26,7 +26,7 @@ router.post('/', async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const apps = await getAllApplications()
-    res.json(apps.map(a => ({ ...a, programCount: parseInt(a.program_count, 10) })))
+    res.json(apps.map(({ program_count, ...a }) => ({ ...a, programCount: parseInt(program_count, 10) })))
   } catch (err) {
     next(err)
   }
