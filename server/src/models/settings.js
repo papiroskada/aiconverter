@@ -22,7 +22,7 @@ export async function upsertSettings(fields) {
   const updates = Object.fromEntries(
     Object.entries(fields).filter(([k]) => allowed.includes(k))
   )
-  if (Object.keys(updates).length === 0) return
+  if (Object.keys(updates).length === 0) return false
 
   const cols = Object.keys(updates)
   const vals = Object.values(updates)
@@ -34,4 +34,5 @@ export async function upsertSettings(fields) {
      ON CONFLICT (id) DO UPDATE SET ${setClauses}, updated_at = NOW()`,
     vals
   )
+  return true
 }

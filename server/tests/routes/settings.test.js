@@ -42,3 +42,13 @@ describe('PUT /api/settings', () => {
     expect(res.status).toBe(204)
   })
 })
+
+describe('PUT /api/settings — invalid body', () => {
+  it('returns 400 when no valid fields provided', async () => {
+    const { upsertSettings } = await import('../../src/models/settings.js')
+    upsertSettings.mockResolvedValueOnce(false)
+    const res = await request(app).put('/api/settings').send({ unknown_field: 'value' })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('No valid fields provided')
+  })
+})

@@ -26,7 +26,8 @@ router.get('/', async (req, res, next) => {
 
 router.put('/', async (req, res, next) => {
   try {
-    await upsertSettings(req.body)
+    const updated = await upsertSettings(req.body)
+    if (updated === false) return res.status(400).json({ error: 'No valid fields provided' })
     res.status(204).send()
   } catch (err) {
     next(err)
