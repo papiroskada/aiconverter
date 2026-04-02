@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import ProgramGraph from './components/Graph/ProgramGraph.jsx'
-import UploadControls from './components/Upload/UploadControls.jsx'
+import Sidebar from './components/Sidebar/Sidebar.jsx'
 import DetailPanel from './components/Panel/DetailPanel.jsx'
 import SettingsDrawer from './components/Settings/SettingsDrawer.jsx'
 import { usePrograms } from './hooks/usePrograms.js'
@@ -18,8 +18,11 @@ export default function App() {
   const [panelRefreshTrigger, setPanelRefreshTrigger] = useState(0)
   const [batchAppId, setBatchAppId] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [selectedAppId, setSelectedAppId] = useState(null)
+  const [focusNodeId, setFocusNodeId] = useState(null)
+  const [stepProgress, setStepProgress] = useState(new Map())
 
-  // Single-file SSE (existing)
+  // Single-file SSE
   useSSE(analyzingId, (event, data) => {
     if (event === 'progress') setProgressEvents(prev => [...prev, data])
     if (event === 'done') {
@@ -42,21 +45,27 @@ export default function App() {
     }
   })
 
-  // Batch/application SSE
+  // Batch SSE
   useAppSSE(batchAppId, (event, data) => {
     if (event === 'progress' && data.programId) {
       if (data.stage === 'analyzing') markAnalyzing(data.programId)
+      if (data.stage === 'step') {
+        setStepProgress(prev => new Map(prev).set(data.programId, { step: data.step, total: data.total }))
+      }
     }
     if (event === 'done') {
       setBatchAppId(null)
+      setStepProgress(new Map())
       refresh()
     }
     if (event === 'failed') {
       setBatchAppId(null)
+      setStepProgress(new Map())
       refresh()
     }
     if (event === 'cancelled') {
       setBatchAppId(null)
+      setStepProgress(new Map())
       refresh()
     }
   })
@@ -94,62 +103,73 @@ export default function App() {
     await refresh()
   }, [selectedId, analyzingId, progressForId, refresh])
 
+  const handleFileClick = useCallback((programId) => {
+    setFocusNodeId(programId)
+    setSelectedId(programId)
+  }, [])
+
+  // Filtered nodes and edges for selected application
+  const displayNodes = selectedAppId
+    ? nodes.filter(n => n.data.applicationId === selectedAppId)
+    : nodes
+
+  const displayEdges = selectedAppId
+    ? (() => {
+        const ids = new Set(displayNodes.map(n => n.id))
+        return edges.filter(e => ids.has(e.source) && ids.has(e.target))
+      })()
+    : edges
+
   if (loading) return <div style={{ color: '#e2e8f0', padding: 20 }}>Loading…</div>
 
   return (
-    <div style={{ width: '100%', height: '100%', background: '#0f172a', position: 'relative' }}>
-      <ProgramGraph
+    <div style={{ width: '100%', height: '100%', background: '#0f172a', display: 'flex' }}>
+      <Sidebar
         nodes={nodes}
-        edges={edges}
-        onNodeClick={(node) => { if (!node.data.isPhantom) setSelectedId(node.id) }}
-        onNodesChange={onNodesChange}
+        selectedAppId={selectedAppId}
+        onSelectApp={setSelectedAppId}
+        onBack={() => setSelectedAppId(null)}
+        onFileClick={handleFileClick}
+        stepProgress={stepProgress}
+        batchAppId={batchAppId}
+        onBatchCancel={handleBatchCancel}
+        onUploaded={handleUploaded}
+        onBatchStarted={handleBatchStarted}
       />
 
-      {/* Settings gear icon */}
-      <button
-        onClick={() => setSettingsOpen(true)}
-        style={{
-          position: 'absolute', top: 16, right: 16, zIndex: 10,
-          background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
-          color: '#94a3b8', fontSize: 18, width: 36, height: 36, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-        title="Settings"
-      >
-        ⚙
-      </button>
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <ProgramGraph
+          nodes={displayNodes}
+          edges={displayEdges}
+          onNodeClick={(node) => { if (!node.data.isPhantom) setSelectedId(node.id) }}
+          onNodesChange={onNodesChange}
+          focusNodeId={focusNodeId}
+        />
 
-      {batchAppId && (
-        <div style={{
-          position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
-          background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
-          padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10, zIndex: 10,
-        }}>
-          <span style={{ color: '#60a5fa', fontSize: 12 }}>⟳ Batch analyzing…</span>
-          <button
-            onClick={handleBatchCancel}
-            style={{
-              background: '#451a03', border: '1px solid #7c2d12', color: '#fed7aa',
-              borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
-            }}
-          >
-            Stop
-          </button>
-        </div>
-      )}
+        <button
+          onClick={() => setSettingsOpen(true)}
+          style={{
+            position: 'absolute', top: 16, right: 16, zIndex: 10,
+            background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+            color: '#94a3b8', fontSize: 18, width: 36, height: 36, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          title="Settings"
+        >
+          ⚙
+        </button>
 
-      <UploadControls onUploaded={handleUploaded} onBatchStarted={handleBatchStarted} />
-
-      <DetailPanel
-        programId={selectedId}
-        progressForId={progressForId}
-        progressEvents={progressEvents}
-        refreshTrigger={panelRefreshTrigger}
-        onClose={() => setSelectedId(null)}
-        onNavigate={(id) => setSelectedId(id)}
-        onDeleted={handleDeleted}
-        onCancel={handleCancel}
-      />
+        <DetailPanel
+          programId={selectedId}
+          progressForId={progressForId}
+          progressEvents={progressEvents}
+          refreshTrigger={panelRefreshTrigger}
+          onClose={() => setSelectedId(null)}
+          onNavigate={(id) => setSelectedId(id)}
+          onDeleted={handleDeleted}
+          onCancel={handleCancel}
+        />
+      </div>
 
       <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
