@@ -1,8 +1,11 @@
 import { getApplicationPrograms, updateApplicationStatus } from '../models/applications.js'
 import { getSettings } from '../models/settings.js'
-import { runProgramFromFile } from './analysisService.js'
+import { runProgramFromFile, cancelProgram } from './analysisService.js'
 
 const CONCURRENCY_LIMIT = 3
+
+const cancelledBatches = new Set()          // applicationIds that have been cancelled
+const batchProgramIds = new Map()           // applicationId → programId[]
 
 async function runWithConcurrencyLimit(tasks, limit) {
   const results = []
@@ -18,6 +21,13 @@ async function runWithConcurrencyLimit(tasks, limit) {
   }
 
   return Promise.allSettled(results)
+}
+
+// Cancel a running batch: abort in-progress programs and prevent future ones from starting.
+export function cancelBatch(applicationId) {
+  cancelledBatches.add(applicationId)
+  const ids = batchProgramIds.get(applicationId) || []
+  for (const id of ids) cancelProgram(id)
 }
 
 export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
@@ -36,17 +46,34 @@ export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
   }
 
   await updateApplicationStatus(applicationId, 'analyzing')
+  batchProgramIds.set(applicationId, pending.map(p => p.id))
 
   const sseEmitters = new Map() // program-level SSE not used in batch; app-level handles progress
 
   const run = async () => {
     if (mode === 'parallel') {
-      const tasks = pending.map(p => () => runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters))
+      const tasks = pending.map(p => () => {
+        if (cancelledBatches.has(applicationId)) return Promise.resolve()
+        return runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters)
+      })
       await runWithConcurrencyLimit(tasks, CONCURRENCY_LIMIT)
     } else {
       for (const p of pending) {
+        if (cancelledBatches.has(applicationId)) break
         await runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters)
       }
+    }
+
+    batchProgramIds.delete(applicationId)
+
+    if (cancelledBatches.has(applicationId)) {
+      cancelledBatches.delete(applicationId)
+      await updateApplicationStatus(applicationId, 'pending')
+      const emitters = appSseEmitters.get(applicationId) || []
+      for (const res of emitters) {
+        res.write(`event: cancelled\ndata: ${JSON.stringify({ applicationId })}\n\n`)
+      }
+      return
     }
 
     const updated = await getApplicationPrograms(applicationId)
@@ -63,6 +90,8 @@ export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
 
   const runPromise = run()
   runPromise.catch(async (err) => {
+    batchProgramIds.delete(applicationId)
+    cancelledBatches.delete(applicationId)
     await updateApplicationStatus(applicationId, 'failed')
     const emitters = appSseEmitters.get(applicationId) || []
     for (const res of emitters) {

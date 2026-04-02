@@ -5,7 +5,7 @@ import {
   findApplicationById,
   getApplicationPrograms,
 } from '../models/applications.js'
-import { startBatchAnalysis } from '../services/batchService.js'
+import { startBatchAnalysis, cancelBatch } from '../services/batchService.js'
 
 const router = Router()
 
@@ -69,6 +69,16 @@ router.post('/:id/analyze', async (req, res, next) => {
     const mode = req.body.mode === 'parallel' ? 'parallel' : 'sequential'
     startBatchAnalysis(req.params.id, mode, appSseEmitters)
     res.status(202).json({ status: 'analyzing', mode })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/applications/:id/cancel
+router.post('/:id/cancel', async (req, res, next) => {
+  try {
+    cancelBatch(req.params.id)
+    res.status(204).send()
   } catch (err) {
     next(err)
   }

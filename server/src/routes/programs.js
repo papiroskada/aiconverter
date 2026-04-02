@@ -4,7 +4,7 @@ import { getAllPrograms, findProgramById } from '../models/programs.js'
 import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
-import { uploadAndStartAnalysis, reanalyze, deleteProgram } from '../services/analysisService.js'
+import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage() })
@@ -99,6 +99,16 @@ router.delete('/:id', async (req, res) => {
     res.status(204).send()
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+// POST /api/programs/:id/cancel
+router.post('/:id/cancel', async (req, res, next) => {
+  try {
+    const cancelled = cancelProgram(req.params.id)
+    res.json({ cancelled })
+  } catch (err) {
+    next(err)
   }
 })
 
