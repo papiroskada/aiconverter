@@ -6,6 +6,8 @@ import SettingsDrawer from './components/Settings/SettingsDrawer.jsx'
 import { usePrograms } from './hooks/usePrograms.js'
 import { useSSE } from './hooks/useSSE.js'
 import { useAppSSE } from './hooks/useAppSSE.js'
+import { cancelAnalysis } from './api/programs.js'
+import { cancelApplication } from './api/applications.js'
 
 export default function App() {
   const { nodes, edges, loading, refresh, markAnalyzing, markAnalyzed, onNodesChange } = usePrograms()
@@ -32,6 +34,12 @@ export default function App() {
       setAnalyzingId(null)
       refresh()
     }
+    if (event === 'cancelled') {
+      setAnalyzingId(null)
+      setProgressForId(null)
+      setProgressEvents([])
+      refresh()
+    }
   })
 
   // Batch/application SSE
@@ -44,6 +52,10 @@ export default function App() {
       refresh()
     }
     if (event === 'failed') {
+      setBatchAppId(null)
+      refresh()
+    }
+    if (event === 'cancelled') {
       setBatchAppId(null)
       refresh()
     }
@@ -61,6 +73,16 @@ export default function App() {
     setBatchAppId(appId)
     await refresh()
   }, [refresh])
+
+  const handleCancel = useCallback(async () => {
+    if (!analyzingId) return
+    try { await cancelAnalysis(analyzingId) } catch (err) { console.error('Cancel failed', err) }
+  }, [analyzingId])
+
+  const handleBatchCancel = useCallback(async () => {
+    if (!batchAppId) return
+    try { await cancelApplication(batchAppId) } catch (err) { console.error('Batch cancel failed', err) }
+  }, [batchAppId])
 
   const handleDeleted = useCallback(async (programId) => {
     if (selectedId === programId) setSelectedId(null)
@@ -97,6 +119,25 @@ export default function App() {
         ⚙
       </button>
 
+      {batchAppId && (
+        <div style={{
+          position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+          background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+          padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10, zIndex: 10,
+        }}>
+          <span style={{ color: '#60a5fa', fontSize: 12 }}>⟳ Batch analyzing…</span>
+          <button
+            onClick={handleBatchCancel}
+            style={{
+              background: '#451a03', border: '1px solid #7c2d12', color: '#fed7aa',
+              borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
+            }}
+          >
+            Stop
+          </button>
+        </div>
+      )}
+
       <UploadControls onUploaded={handleUploaded} onBatchStarted={handleBatchStarted} />
 
       <DetailPanel
@@ -107,6 +148,7 @@ export default function App() {
         onClose={() => setSelectedId(null)}
         onNavigate={(id) => setSelectedId(id)}
         onDeleted={handleDeleted}
+        onCancel={handleCancel}
       />
 
       <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />

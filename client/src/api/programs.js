@@ -38,3 +38,9 @@ export async function deleteProgram(id) {
     throw new Error(message)
   }
 }
+
+export async function cancelAnalysis(id) {
+  const res = await fetch(`${BASE}/${id}/cancel`, { method: 'POST' })
+  if (!res.ok) throw new Error('Cancel failed')
+  return res.json()
+}

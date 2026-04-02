@@ -17,7 +17,7 @@ function eventIcon(event) {
   return { icon: '▶', color: '#94a3b8' }
 }
 
-function ProgressUI({ progressEvents }) {
+function ProgressUI({ progressEvents, onCancel }) {
   const logRef = useRef(null)
 
   useEffect(() => {
@@ -26,17 +26,32 @@ function ProgressUI({ progressEvents }) {
     }
   }, [progressEvents.length])
 
-  const latestChunk = [...progressEvents].reverse().find(e => e.stage === 'chunk' && e.total)
+  const latestStep = [...progressEvents].reverse().find(e => e.stage === 'step' && e.total)
   const latestEvent = progressEvents[progressEvents.length - 1]
-  const progressPercent = latestChunk
-    ? Math.round((latestChunk.chunkIndex / latestChunk.total) * 100)
+  const progressPercent = latestStep
+    ? Math.round((latestStep.step / latestStep.total) * 100)
     : null
+
+  const logEvents = progressEvents.filter(e => e.stage !== 'step')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
-        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
-          {latestEvent ? latestEvent.message : 'Analyzing…'}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+            {latestEvent ? latestEvent.message : 'Analyzing…'}
+          </div>
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              style={{
+                background: '#451a03', border: '1px solid #7c2d12', color: '#fed7aa',
+                borderRadius: 5, padding: '2px 8px', fontSize: 11, cursor: 'pointer',
+              }}
+            >
+              Stop
+            </button>
+          )}
         </div>
         <div style={{ height: 4, background: '#0f172a', borderRadius: 2, overflow: 'hidden' }}>
           {progressPercent != null ? (
@@ -59,7 +74,7 @@ function ProgressUI({ progressEvents }) {
         </div>
         {progressPercent != null && (
           <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>
-            {latestChunk.chunkIndex} / {latestChunk.total} chunks ({progressPercent}%)
+            Step {latestStep.step} of {latestStep.total} ({progressPercent}%)
           </div>
         )}
       </div>
@@ -75,7 +90,7 @@ function ProgressUI({ progressEvents }) {
           fontFamily: 'monospace',
         }}
       >
-        {progressEvents.map((event, i) => {
+        {logEvents.map((event, i) => {
           const { icon, color } = eventIcon(event)
           const duration = event.durationMs != null ? ` (${event.durationMs}ms)` : ''
           return (
@@ -90,7 +105,7 @@ function ProgressUI({ progressEvents }) {
   )
 }
 
-export default function DetailPanel({ programId, onClose, onNavigate, onDeleted, progressForId, progressEvents = [], refreshTrigger = 0 }) {
+export default function DetailPanel({ programId, onClose, onNavigate, onDeleted, progressForId, progressEvents = [], refreshTrigger = 0, onCancel }) {
   const [program, setProgram] = useState(null)
   const [tab, setTab] = useState('Overview')
   const [deleting, setDeleting] = useState(false)
@@ -203,7 +218,7 @@ export default function DetailPanel({ programId, onClose, onNavigate, onDeleted,
         )}
         {isAnalyzing && (
           <div style={{ marginBottom: 16 }}>
-            <ProgressUI progressEvents={progressEvents} />
+            <ProgressUI progressEvents={progressEvents} onCancel={onCancel} />
           </div>
         )}
         {!program ? <p style={{ color: '#64748b' }}>Loading…</p> : (

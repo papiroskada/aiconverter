@@ -25,3 +25,7 @@ export async function startApplicationAnalysis(id, mode) {
   if (!res.ok) throw new Error('Failed to start analysis')
   return res.json()
 }
+
+export async function cancelApplication(id) {
+  await fetch(`${BASE}/${id}/cancel`, { method: 'POST' })
+}
