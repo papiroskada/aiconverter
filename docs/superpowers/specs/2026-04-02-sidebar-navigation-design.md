@@ -29,7 +29,7 @@ The sidebar is always visible (not collapsible in this version). The DetailPanel
 
 Shown by default. Displays all applications fetched from `GET /api/applications`.
 
-**Header:** "Проекти" label + small "+ New" text button (creates application via modal or inline input — not in this spec, placeholder only).
+**Header:** "Проекти" label + small "+ New" text button. Clicking it does nothing in this version (the user creates applications by uploading a folder via `+ Upload Folder`).
 
 **Each project row:**
 - Application name (uppercase)
@@ -74,7 +74,7 @@ Each file row:
 
 ## Graph changes
 
-**Filter by selected application:** When a project is open (View 2), App.jsx passes only nodes belonging to that application to ProgramGraph. When in View 1 (no app selected), all nodes are shown.
+**Filter by selected application:** When a project is open (View 2), App.jsx passes only nodes belonging to that application to ProgramGraph, and only edges where both source and target nodes are in that set. When in View 1 (no app selected), all nodes and edges are shown.
 
 **Focus node on file click:** ProgramGraph accepts a new `focusNodeId` prop. When it changes (and is non-null), the component uses `useReactFlow().fitBounds` to pan and zoom to that node with padding. The focused node gets a blue highlight ring (temporary, cleared after 2 seconds or on next click).
 
