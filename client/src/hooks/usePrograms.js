@@ -34,7 +34,7 @@ function buildNodes(programs) {
     id: p.id,
     type: 'programNode',
     position: { x: 0, y: 0 },
-    data: { name: p.name, status: p.status, isPhantom: p.status === 'pending' },
+    data: { name: p.name, status: p.status, isPhantom: p.status === 'pending', applicationId: p.application_id ?? null },
   }))
 }
 
