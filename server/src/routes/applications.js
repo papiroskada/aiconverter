@@ -85,11 +85,12 @@ router.delete('/:id', async (req, res, next) => {
     const programs = await getProgramsByApplicationId(req.params.id)
     for (const p of programs) cancelProgram(p.id)
     await deleteProgramsByApplicationId(req.params.id)
+    await deleteApplicationById(req.params.id)
+    res.status(204).send()
+    // File cleanup after response — don't block the client
     for (const p of programs) {
       if (p.file_path) try { rmSync(p.file_path, { force: true }) } catch {}
     }
-    await deleteApplicationById(req.params.id)
-    res.status(204).send()
   } catch (err) {
     next(err)
   }
