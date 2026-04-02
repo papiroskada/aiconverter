@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchApplications, cancelApplication } from '../../api/applications.js'
+import { fetchApplications } from '../../api/applications.js'
 import { uploadFile } from '../../api/programs.js'
 import ConfirmationModal from '../Upload/ConfirmationModal.jsx'
 
