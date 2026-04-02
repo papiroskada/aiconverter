@@ -6,7 +6,7 @@ import { getProvider } from '../ai/providers/base.js'
 import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
-import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, deleteProgramById, deleteOrphanedPhantoms } from '../models/programs.js'
+import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms } from '../models/programs.js'
 import { upsertAnalysis, updateDiagram, updateAnalysisFields } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId, updateChunkPurpose } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
@@ -92,6 +92,9 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
       throw Object.assign(new Error('Already analyzing'), { status: 409 })
     }
     await updateProgramStatus(program.id, 'analyzing')
+    if (applicationId) {
+      await updateProgramApplicationId(program.id, applicationId)
+    }
   }
 
   const filePath = join(UPLOADS_DIR, `${program.id}.cbl`)

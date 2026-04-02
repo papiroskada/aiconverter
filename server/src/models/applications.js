@@ -42,3 +42,7 @@ export async function updateApplicationStatus(id, status) {
     [status, id]
   )
 }
+
+export async function deleteApplicationById(id) {
+  await pool.query('DELETE FROM applications WHERE id = $1', [id])
+}

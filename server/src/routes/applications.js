@@ -1,11 +1,15 @@
 import { Router } from 'express'
+import { rmSync } from 'fs'
 import {
   createApplication,
   getAllApplications,
   findApplicationById,
   getApplicationPrograms,
+  deleteApplicationById,
 } from '../models/applications.js'
+import { getProgramsByApplicationId, deleteProgramsByApplicationId } from '../models/programs.js'
 import { startBatchAnalysis, cancelBatch } from '../services/batchService.js'
+import { cancelProgram } from '../services/analysisService.js'
 
 const router = Router()
 
@@ -69,6 +73,23 @@ router.post('/:id/analyze', async (req, res, next) => {
     const mode = req.body.mode === 'parallel' ? 'parallel' : 'sequential'
     startBatchAnalysis(req.params.id, mode, appSseEmitters)
     res.status(202).json({ status: 'analyzing', mode })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /api/applications/:id — cancels any running batch, deletes all programs + files + the application
+router.delete('/:id', async (req, res, next) => {
+  try {
+    cancelBatch(req.params.id)
+    const programs = await getProgramsByApplicationId(req.params.id)
+    for (const p of programs) cancelProgram(p.id)
+    await deleteProgramsByApplicationId(req.params.id)
+    for (const p of programs) {
+      if (p.file_path) try { rmSync(p.file_path, { force: true }) } catch {}
+    }
+    await deleteApplicationById(req.params.id)
+    res.status(204).send()
   } catch (err) {
     next(err)
   }

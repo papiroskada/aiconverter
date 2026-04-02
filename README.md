@@ -113,7 +113,8 @@ Scan a local directory and start analysis without opening the browser:
 ```bash
 node cli/scan.js --dir /path/to/cobol/project --name "MY APP" --mode sequential
 ```
-
+node cli/scan.js --dir /home/darias/Documents/estelplan/050001/sqa/source/cblsrc --name "estelplan" --mode sequential
+/home/darias/Documents/estelplan/050001/sqa/source/cblsrc
 Options:
 
 | Flag | Description | Default |

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchApplications } from '../../api/applications.js'
+import { fetchApplications, deleteApplication } from '../../api/applications.js'
 import { uploadFile } from '../../api/programs.js'
 import ConfirmationModal from '../Upload/ConfirmationModal.jsx'
 
@@ -89,7 +89,7 @@ function ProjectsList({ applications, nodes, onSelectApp, onUploadFolder, onUplo
 
 // ── Project files view ──────────────────────────────────────────────────────
 
-function ProjectFiles({ app, nodes, stepProgress, batchAppId, onBack, onFileClick, onBatchCancel, onAddFiles }) {
+function ProjectFiles({ app, nodes, stepProgress, batchAppId, onBack, onFileClick, onBatchCancel, onDeleteApp, onAddFiles }) {
   const appNodes = nodes
     .filter(n => n.data.applicationId === app.id)
     .slice()
@@ -124,6 +124,17 @@ function ProjectFiles({ app, nodes, stepProgress, batchAppId, onBack, onFileClic
             style={{ background: '#451a03', border: '1px solid #7c2d12', color: '#fed7aa', borderRadius: 4, padding: '3px 8px', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}
           >
             Stop
+          </button>
+        )}
+        {!isThisBatchRunning && (
+          <button
+            onClick={onDeleteApp}
+            title="Delete project and all files"
+            style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}
+            onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
+            onMouseLeave={e => e.currentTarget.style.color = '#475569'}
+          >
+            ×
           </button>
         )}
       </div>
@@ -193,6 +204,7 @@ export default function Sidebar({
   onBatchCancel,
   onUploaded,
   onBatchStarted,
+  onDeleteApp,
 }) {
   const [applications, setApplications] = useState([])
   const [folderFiles, setFolderFiles] = useState(null)
@@ -269,6 +281,16 @@ export default function Sidebar({
           onBack={onBack}
           onFileClick={onFileClick}
           onBatchCancel={onBatchCancel}
+          onDeleteApp={async () => {
+            if (!window.confirm(`Delete "${selectedApp.name}" and all its files?`)) return
+            try {
+              await deleteApplication(selectedApp.id)
+              onDeleteApp(selectedApp.id)
+              loadApps()
+            } catch (err) {
+              console.error('Delete failed', err)
+            }
+          }}
           onAddFiles={() => fileRef.current.click()}
         />
       )}

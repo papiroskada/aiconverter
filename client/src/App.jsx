@@ -80,6 +80,7 @@ export default function App() {
 
   const handleBatchStarted = useCallback(async (appId) => {
     setBatchAppId(appId)
+    setSelectedAppId(appId)
     await refresh()
   }, [refresh])
 
@@ -102,6 +103,13 @@ export default function App() {
     }
     await refresh()
   }, [selectedId, analyzingId, progressForId, refresh])
+
+  const handleDeleteApp = useCallback(async (appId) => {
+    if (selectedAppId === appId) setSelectedAppId(null)
+    if (batchAppId === appId) setBatchAppId(null)
+    setSelectedId(null)
+    await refresh()
+  }, [selectedAppId, batchAppId, refresh])
 
   const handleFileClick = useCallback((programId) => {
     setFocusNodeId(programId)
@@ -135,6 +143,7 @@ export default function App() {
         onBatchCancel={handleBatchCancel}
         onUploaded={handleUploaded}
         onBatchStarted={handleBatchStarted}
+        onDeleteApp={handleDeleteApp}
       />
 
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>

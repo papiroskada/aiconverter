@@ -35,3 +35,8 @@ export async function fetchApplications() {
   if (!res.ok) throw new Error('Failed to fetch applications')
   return res.json()
 }
+
+export async function deleteApplication(id) {
+  const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete application')
+}

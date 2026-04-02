@@ -40,6 +40,25 @@ export async function updateFilePath(id, file_path) {
   )
 }
 
+export async function updateProgramApplicationId(id, applicationId) {
+  await pool.query(
+    'UPDATE programs SET application_id = $1, updated_at = NOW() WHERE id = $2',
+    [applicationId, id]
+  )
+}
+
+export async function getProgramsByApplicationId(applicationId) {
+  const { rows } = await pool.query(
+    'SELECT id, file_path FROM programs WHERE application_id = $1',
+    [applicationId]
+  )
+  return rows
+}
+
+export async function deleteProgramsByApplicationId(applicationId) {
+  await pool.query('DELETE FROM programs WHERE application_id = $1', [applicationId])
+}
+
 export async function getAllPrograms() {
   const { rows } = await pool.query('SELECT id, name, status FROM programs ORDER BY created_at ASC')
   return rows
