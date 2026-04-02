@@ -29,3 +29,9 @@ export async function startApplicationAnalysis(id, mode) {
 export async function cancelApplication(id) {
   await fetch(`${BASE}/${id}/cancel`, { method: 'POST' })
 }
+
+export async function fetchApplications() {
+  const res = await fetch(BASE)
+  if (!res.ok) throw new Error('Failed to fetch applications')
+  return res.json()
+}
