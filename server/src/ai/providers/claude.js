@@ -12,32 +12,30 @@ export class ClaudeProvider extends BaseProvider {
     this.modelDiagram   = config.claude_model_diagram  || process.env.CLAUDE_MODEL_DIAGRAM  || 'claude-haiku-4-5-20251001'
   }
 
-  async #callClaude(prompt, maxTokens, model) {
-    const message = await this.client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-    })
+  async #callClaude(prompt, maxTokens, model, signal) {
+    const message = await this.client.messages.create(
+      { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] },
+      { signal }
+    )
     const text = message.content[0].text.trim()
     const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     return JSON.parse(cleaned)
   }
 
-  async extractInterface(context) {
-    return this.#callClaude(INTERFACE_PROMPT(context), 4096, this.modelInterface)
+  async extractInterface(context, signal) {
+    return this.#callClaude(INTERFACE_PROMPT(context), 4096, this.modelInterface, signal)
   }
 
-  async extractRules(context) {
-    const result = await this.#callClaude(RULES_PROMPT(context), 4096, this.modelRules)
+  async extractRules(context, signal) {
+    const result = await this.#callClaude(RULES_PROMPT(context), 4096, this.modelRules, signal)
     return result.paragraphRules ?? []
   }
 
-  async generateDiagram(summary) {
-    const message = await this.client.messages.create({
-      model: this.modelDiagram,
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }],
-    })
+  async generateDiagram(summary, signal) {
+    const message = await this.client.messages.create(
+      { model: this.modelDiagram, max_tokens: 1024, messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }] },
+      { signal }
+    )
     return message.content[0].text.trim()
   }
 }

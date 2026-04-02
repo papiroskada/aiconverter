@@ -14,6 +14,9 @@ import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphSer
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UPLOADS_DIR = join(__dirname, '../../../uploads')
 
+// Active AbortControllers: programId → AbortController
+const activeControllers = new Map()
+
 function makeEmit(programId, sseEmitters) {
   return (event, data) => {
     const emitters = sseEmitters.get(programId) || []
@@ -25,12 +28,14 @@ function makeEmit(programId, sseEmitters) {
 
 // Core analysis logic — awaitable, accepts a pre-built emit function and settings config
 async function runAnalysisCore(programId, programName, cobolText, savedChunks, emit, settings) {
+  const controller = new AbortController()
+  activeControllers.set(programId, controller)
   const provider = await getProvider(settings)
   try {
     const {
       description, flow_narrative, input_contract, output_contract,
       external_calls, db_tables, file_ops, sections, diagram,
-    } = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName })
+    } = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
 
     await upsertAnalysis({ program_id: programId, description, call_parameters: [], external_calls: [], db_tables: [] })
     await updateAnalysisFields(programId, { external_calls, db_tables, file_ops, input_contract, output_contract, flow_narrative })
@@ -46,11 +51,27 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
     emit('done', { programId })
   } catch (err) {
+    if (err.name === 'AbortError') {
+      logger.info(programName, 'Analysis cancelled')
+      await updateProgramStatus(programId, 'pending')
+      emit('cancelled', { programId })
+      return
+    }
     logger.error(programName, `Analysis failed: ${err.message}`)
     emit('progress', { stage: 'failed', message: `Analysis failed: ${err.message}` })
     await updateProgramStatus(programId, 'failed')
     emit('failed', { error: err.message })
+  } finally {
+    activeControllers.delete(programId)
   }
+}
+
+// Cancel an in-progress analysis. Returns true if a controller was found and aborted.
+export function cancelProgram(programId) {
+  const controller = activeControllers.get(programId)
+  if (!controller) return false
+  controller.abort()
+  return true
 }
 
 // Single-file upload: saves file, parses, and fire-and-forgets analysis (no applicationId)

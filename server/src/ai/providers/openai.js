@@ -12,31 +12,37 @@ export class OpenAIProvider extends BaseProvider {
     this.modelDiagram   = config.openai_model_diagram  || process.env.OPENAI_MODEL_DIAGRAM  || 'gpt-4o-mini'
   }
 
-  async #callOpenAI(prompt, maxTokens, model) {
-    const completion = await this.client.chat.completions.create({
-      model,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }],
-    })
+  async #callOpenAI(prompt, maxTokens, model, signal) {
+    const completion = await this.client.chat.completions.create(
+      {
+        model,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { signal }
+    )
     return JSON.parse(completion.choices[0].message.content)
   }
 
-  async extractInterface(context) {
-    return this.#callOpenAI(INTERFACE_PROMPT(context), 4096, this.modelInterface)
+  async extractInterface(context, signal) {
+    return this.#callOpenAI(INTERFACE_PROMPT(context), 4096, this.modelInterface, signal)
   }
 
-  async extractRules(context) {
-    const result = await this.#callOpenAI(RULES_PROMPT(context), 4096, this.modelRules)
+  async extractRules(context, signal) {
+    const result = await this.#callOpenAI(RULES_PROMPT(context), 4096, this.modelRules, signal)
     return result.paragraphRules ?? []
   }
 
-  async generateDiagram(summary) {
-    const completion = await this.client.chat.completions.create({
-      model: this.modelDiagram,
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }],
-    })
+  async generateDiagram(summary, signal) {
+    const completion = await this.client.chat.completions.create(
+      {
+        model: this.modelDiagram,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: DIAGRAM_PROMPT(summary) }],
+      },
+      { signal }
+    )
     return completion.choices[0].message.content.trim()
   }
 }

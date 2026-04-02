@@ -1,7 +1,7 @@
 export class BaseProvider {
-  async extractInterface(context) { throw new Error('Not implemented') }
-  async extractRules(context) { throw new Error('Not implemented') }
-  async generateDiagram(summary) { throw new Error('Not implemented') }
+  async extractInterface(context, signal) { throw new Error('Not implemented') }
+  async extractRules(context, signal) { throw new Error('Not implemented') }
+  async generateDiagram(summary, signal) { throw new Error('Not implemented') }
 }
 
 /**

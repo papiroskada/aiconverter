@@ -64,13 +64,10 @@ function buildInterfaceContext(linkage, paragraphChunks, calls, execSqlTables, s
   ].join('\n\n')
 }
 
-export async function runAnalysis({ cobolText, chunks, provider, emit, programName, tokenLimit = 80000 }) {
+export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal, tokenLimit = 80000 }) {
   const paragraphChunks = chunks.filter(
     c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph'
   )
-
-  const ti = Date.now()
-  logAndEmit(emit, programName, 'start', { stage: 'interface', message: 'Analysing interface...' })
 
   const linkage = extractLinkage(cobolText)
   const wsVars = extractWorkingStorage(cobolText)
@@ -86,23 +83,32 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     linkage, paragraphChunks, calls, execSqlTables, selectFiles, constructs, wsVars, true
   )
 
+  const needsTwoPass = estimateTokens(adaptiveContext) > tokenLimit
+  const totalSteps = (needsTwoPass && complexChunks.length > 0) ? 3 : 2
+
+  const ti = Date.now()
+  logAndEmit(emit, programName, 'start', { stage: 'interface', message: 'Analysing interface...' })
+  emit('progress', { stage: 'step', step: 1, total: totalSteps })
+
+  if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+
   let spec
-  if (estimateTokens(adaptiveContext) <= tokenLimit) {
-    // Single-pass: full text for complex paragraphs, snippets for simple
-    spec = await provider.extractInterface(adaptiveContext)
+  if (!needsTwoPass) {
+    spec = await provider.extractInterface(adaptiveContext, signal)
   } else {
-    // Two-pass: pass 1 with all snippets, pass 2 for complex paragraphs only
     const snippetContext = buildInterfaceContext(
       linkage, paragraphChunks, calls, execSqlTables, selectFiles, constructs, wsVars, false
     )
-    spec = await provider.extractInterface(snippetContext)
+    spec = await provider.extractInterface(snippetContext, signal)
 
     if (complexChunks.length > 0) {
+      if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+      emit('progress', { stage: 'step', step: 2, total: totalSteps })
       try {
         const complexContext = complexChunks
           .map(c => `[${c.chunk_name}]\n${c.cobol_text}`)
           .join('\n\n')
-        const pass2Results = await provider.extractRules(complexContext)
+        const pass2Results = await provider.extractRules(complexContext, signal)
         const rulesMap = new Map(pass2Results.map(r => [r.name, r.rules]))
         spec = {
           ...spec,
@@ -114,6 +120,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
           })),
         }
       } catch (err) {
+        if (err.name === 'AbortError') throw err
         logger.error(programName, `Rules extraction failed (non-fatal): ${err.message}`)
       }
     }
@@ -137,14 +144,18 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     (spec.parameters ?? []).filter(p => p.direction !== 'in')
   )
 
-  // Step 2: Diagram
+  // Step 2/3: Diagram
+  if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+  emit('progress', { stage: 'step', step: totalSteps, total: totalSteps })
+
   const td = Date.now()
   logAndEmit(emit, programName, 'start', { stage: 'diagram', message: 'Generating diagram...' })
   let diagram = null
   try {
-    diagram = await provider.generateDiagram(spec.flow_narrative ?? spec.description ?? '')
+    diagram = await provider.generateDiagram(spec.flow_narrative ?? spec.description ?? '', signal)
     logAndEmit(emit, programName, 'done', { stage: 'diagram', message: 'Diagram done', durationMs: Date.now() - td })
   } catch (err) {
+    if (err.name === 'AbortError') throw err
     logAndEmit(emit, programName, 'error', {
       stage: 'diagram', message: `Diagram failed: ${err.message}`, durationMs: Date.now() - td,
     })

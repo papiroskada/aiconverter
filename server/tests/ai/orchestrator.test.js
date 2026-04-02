@@ -107,7 +107,7 @@ describe('runAnalysis', () => {
   it('calls generateDiagram with flow_narrative', async () => {
     const provider = makeProvider()
     await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
-    expect(provider.generateDiagram).toHaveBeenCalledWith('Entry → process → exit.')
+    expect(provider.generateDiagram).toHaveBeenCalledWith('Entry → process → exit.', undefined)
   })
 
   it('returns description and flow_narrative from interface spec', async () => {
