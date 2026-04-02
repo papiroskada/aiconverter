@@ -86,7 +86,9 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
   if (!program) {
     program = await createProgram({ name: programName, status: 'analyzing', application_id: applicationId })
   } else {
-    if (program.status === 'analyzing') {
+    // Single-file uploads: reject if already analyzing (SSE subscriber is watching it)
+    // Batch uploads (applicationId set): force-reset even if stuck from a previous run
+    if (program.status === 'analyzing' && !applicationId) {
       throw Object.assign(new Error('Already analyzing'), { status: 409 })
     }
     await updateProgramStatus(program.id, 'analyzing')
