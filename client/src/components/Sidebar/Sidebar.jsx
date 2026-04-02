@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchApplications, deleteApplication } from '../../api/applications.js'
+import { fetchApplications, createApplication, deleteApplication, startApplicationAnalysis } from '../../api/applications.js'
 import { uploadFile } from '../../api/programs.js'
 import ConfirmationModal from '../Upload/ConfirmationModal.jsx'
 
@@ -21,17 +21,36 @@ function appStatusColor(status) {
 
 // ── Projects list view ──────────────────────────────────────────────────────
 
-function ProjectsList({ applications, nodes, onSelectApp, onUploadFolder, onUploadFile }) {
+function ProjectsList({ applications, nodes, onSelectApp, onUploadFolder, onCreateProject }) {
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const inputRef = useRef(null)
+
+  function startCreate() {
+    setCreating(true)
+    setNewName('')
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  async function submitCreate(e) {
+    e.preventDefault()
+    const name = newName.trim()
+    if (!name) return
+    await onCreateProject(name)
+    setCreating(false)
+    setNewName('')
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '14px 14px 10px', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>Проекти</span>
+      <div style={{ padding: '14px 14px 10px', borderBottom: '1px solid #334155' }}>
+        <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>Projects</span>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
         {applications.length === 0 && (
           <div style={{ color: '#475569', fontSize: 12, padding: '12px 8px' }}>
-            Немає проектів. Завантажте папку щоб почати.
+            No projects yet. Upload a folder or create a project to get started.
           </div>
         )}
         {applications.map(app => {
@@ -70,18 +89,52 @@ function ProjectsList({ applications, nodes, onSelectApp, onUploadFolder, onUplo
       </div>
 
       <div style={{ padding: '10px 8px', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <button
-          onClick={onUploadFolder}
-          style={{ background: '#2563eb', border: 'none', borderRadius: 6, color: 'white', padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-        >
-          + Upload Folder
-        </button>
-        <button
-          onClick={onUploadFile}
-          style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#94a3b8', padding: '8px', fontSize: 12, cursor: 'pointer' }}
-        >
-          + Upload File
-        </button>
+        {creating ? (
+          <form onSubmit={submitCreate} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <input
+              ref={inputRef}
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              placeholder="Project name"
+              style={{
+                background: '#0f172a', border: '1px solid #475569', borderRadius: 6,
+                color: '#e2e8f0', padding: '6px 8px', fontSize: 12, outline: 'none',
+              }}
+              onKeyDown={e => { if (e.key === 'Escape') setCreating(false) }}
+            />
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                type="submit"
+                disabled={!newName.trim()}
+                style={{ flex: 1, background: '#2563eb', border: 'none', borderRadius: 6, color: 'white', padding: '7px', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: newName.trim() ? 1 : 0.5 }}
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                style={{ flex: 1, background: '#334155', border: 'none', borderRadius: 6, color: '#94a3b8', padding: '7px', fontSize: 12, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <button
+              onClick={onUploadFolder}
+              style={{ background: '#2563eb', border: 'none', borderRadius: 6, color: 'white', padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              + Upload Folder
+            </button>
+            <button
+              onClick={startCreate}
+              style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#94a3b8', padding: '8px', fontSize: 12, cursor: 'pointer' }}
+            >
+              + New Project
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
@@ -143,10 +196,15 @@ function ProjectFiles({ app, nodes, stepProgress, batchAppId, onBack, onFileClic
         <div style={{ background: '#0f172a', borderRadius: 2, height: 4 }}>
           <div style={{ background: '#2563eb', height: '100%', width: `${progressPct}%`, borderRadius: 2, transition: 'width 0.5s' }} />
         </div>
-        <div style={{ color: '#475569', fontSize: 10, marginTop: 3 }}>{analyzedCount} з {total} готово</div>
+        <div style={{ color: '#475569', fontSize: 10, marginTop: 3 }}>{analyzedCount} of {total} done</div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {appNodes.length === 0 && (
+          <div style={{ color: '#475569', fontSize: 11, padding: '12px 8px' }}>
+            No files yet. Add files to start analysis.
+          </div>
+        )}
         {appNodes.map(node => {
           const { icon, color } = statusIcon(node.data.status)
           const step = stepProgress.get(node.id)
@@ -184,7 +242,7 @@ function ProjectFiles({ app, nodes, stepProgress, batchAppId, onBack, onFileClic
           onClick={onAddFiles}
           style={{ background: '#334155', border: 'none', borderRadius: 5, color: '#94a3b8', padding: '7px', width: '100%', fontSize: 11, cursor: 'pointer' }}
         >
-          + Додати файли
+          + Add Files
         </button>
       </div>
     </div>
@@ -209,7 +267,6 @@ export default function Sidebar({
   const [applications, setApplications] = useState([])
   const [folderFiles, setFolderFiles] = useState(null)
   const [defaultFolderName, setDefaultFolderName] = useState('')
-  const [uploading, setUploading] = useState(false)
   const fileRef = useRef(null)
   const folderRef = useRef(null)
 
@@ -234,16 +291,14 @@ export default function Sidebar({
   async function handleSingleFile(e) {
     const file = e.target.files[0]
     if (!file) return
-    setUploading(true)
     try {
-      const applicationId = selectedAppId ?? null
-      const program = await uploadFile(file, applicationId)
-      onUploaded(program)
+      await uploadFile(file, selectedAppId)
+      await startApplicationAnalysis(selectedAppId, 'sequential')
+      onBatchStarted(selectedAppId)
       loadApps()
     } catch (err) {
       console.error('Upload failed', err)
     } finally {
-      setUploading(false)
       fileRef.current.value = ''
     }
   }
@@ -255,6 +310,16 @@ export default function Sidebar({
     setDefaultFolderName(folderName.toUpperCase())
     setFolderFiles(files)
     folderRef.current.value = ''
+  }
+
+  async function handleCreateProject(name) {
+    try {
+      const app = await createApplication(name.toUpperCase())
+      await loadApps()
+      onSelectApp(app.id)
+    } catch (err) {
+      console.error('Failed to create project', err)
+    }
   }
 
   const selectedApp = applications.find(a => a.id === selectedAppId) ?? null
@@ -270,7 +335,7 @@ export default function Sidebar({
           nodes={nodes}
           onSelectApp={onSelectApp}
           onUploadFolder={() => folderRef.current.click()}
-          onUploadFile={() => fileRef.current.click()}
+          onCreateProject={handleCreateProject}
         />
       ) : (
         <ProjectFiles
