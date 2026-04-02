@@ -1,4 +1,5 @@
-import ReactFlow, { Background, Controls, MiniMap, Panel } from 'reactflow'
+import { useEffect } from 'react'
+import ReactFlow, { Background, Controls, MiniMap, Panel, useReactFlow } from 'reactflow'
 import 'reactflow/dist/style.css'
 import ProgramNode from './ProgramNode.jsx'
 
@@ -11,7 +12,25 @@ const LEGEND = [
   { color: '#475569', label: 'Pending', dashed: true },
 ]
 
-export default function ProgramGraph({ nodes, edges, onNodeClick, onNodesChange }) {
+const NODE_WIDTH = 160
+const NODE_HEIGHT = 40
+
+function FocusHandler({ focusNodeId, nodes }) {
+  const { setCenter } = useReactFlow()
+  useEffect(() => {
+    if (!focusNodeId) return
+    const node = nodes.find(n => n.id === focusNodeId)
+    if (!node) return
+    setCenter(
+      node.position.x + NODE_WIDTH / 2,
+      node.position.y + NODE_HEIGHT / 2,
+      { zoom: 1.5, duration: 500 }
+    )
+  }, [focusNodeId])
+  return null
+}
+
+export default function ProgramGraph({ nodes, edges, onNodeClick, onNodesChange, focusNodeId }) {
   return (
     <ReactFlow
       nodes={nodes}
@@ -21,6 +40,7 @@ export default function ProgramGraph({ nodes, edges, onNodeClick, onNodesChange 
       onNodesChange={onNodesChange}
       fitView
     >
+      <FocusHandler focusNodeId={focusNodeId} nodes={nodes} />
       <Panel position="top-right">
         <div style={{
           background: 'rgba(15,23,42,0.85)', borderRadius: 8, padding: '8px 12px',
