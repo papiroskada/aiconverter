@@ -1,104 +1,62 @@
-import { render, screen, fireEvent, act } from '@testing-library/react'
-import { vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
 import OverviewTab from '../../src/components/Panel/OverviewTab.jsx'
 
-// Mock mermaid
-vi.mock('mermaid', () => ({
-  default: {
-    initialize: vi.fn(),
-    render: vi.fn().mockResolvedValue({ svg: '<svg>diagram</svg>' }),
-  },
-}))
-
-const analysisWithDiagram = {
-  description: 'Validates customer data.',
-  call_parameters: [{ name: 'WS-PARAM', type: 'input', description: 'Customer ID' }],
-  diagram: 'flowchart TD\n  A --> B',
-}
-
-const analysisNoDiagram = {
-  description: 'Simple program.',
-  call_parameters: [],
-  diagram: null,
-}
-
-test('shows "No analysis yet." when analysis is null', () => {
-  render(<OverviewTab analysis={null} />)
-  expect(screen.getByText('No analysis yet.')).toBeInTheDocument()
+const makeAnalysis = (overrides = {}) => ({
+  business_purpose: 'Manages user record lifecycle for the HR system.',
+  input_contract: JSON.stringify([
+    { name: 'userInfo', cobolName: 'WGET-USR-INFO', type: 'object', direction: 'in', description: 'User data to process' },
+  ]),
+  output_contract: JSON.stringify([
+    { name: 'result', cobolName: 'WGET-RESULT', type: 'string', direction: 'out', description: 'Operation result code' },
+  ]),
+  ...overrides,
 })
 
-test('renders description text', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+describe('OverviewTab', () => {
+  it('shows no analysis message when analysis is null', () => {
+    render(<OverviewTab analysis={null} />)
+    expect(screen.getByText('No analysis yet.')).toBeTruthy()
   })
-  expect(screen.getByText('Validates customer data.')).toBeInTheDocument()
-})
 
-test('renders diagram container when diagram is present', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+  it('renders business_purpose', () => {
+    render(<OverviewTab analysis={makeAnalysis()} />)
+    expect(screen.getByText('Manages user record lifecycle for the HR system.')).toBeTruthy()
   })
-  expect(screen.getByTitle('Fullscreen')).toBeInTheDocument()
-})
 
-test('shows "Diagram not available." when diagram is null', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisNoDiagram} />)
+  it('renders input parameter name and type', () => {
+    render(<OverviewTab analysis={makeAnalysis()} />)
+    expect(screen.getByText('userInfo')).toBeTruthy()
+    expect(screen.getByText('object')).toBeTruthy()
   })
-  expect(screen.getByText('Diagram not available.')).toBeInTheDocument()
-})
 
-test('opens fullscreen overlay on button click', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+  it('renders input parameter cobolName', () => {
+    render(<OverviewTab analysis={makeAnalysis()} />)
+    expect(screen.getByText('WGET-USR-INFO')).toBeTruthy()
   })
-  const btn = screen.getByTitle('Fullscreen')
-  await act(async () => { fireEvent.click(btn) })
-  expect(document.querySelector('[data-testid="fullscreen-overlay"]')).not.toBeNull()
-})
 
-test('closes fullscreen overlay when clicking outside the diagram', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+  it('renders input parameter description', () => {
+    render(<OverviewTab analysis={makeAnalysis()} />)
+    expect(screen.getByText('User data to process')).toBeTruthy()
   })
-  await act(async () => { fireEvent.click(screen.getByTitle('Fullscreen')) })
-  const overlay = document.querySelector('[data-testid="fullscreen-overlay"]')
-  await act(async () => { fireEvent.click(overlay) })
-  expect(document.querySelector('[data-testid="fullscreen-overlay"]')).toBeNull()
-})
 
-test('closes fullscreen overlay on Escape key', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+  it('renders output parameter name', () => {
+    render(<OverviewTab analysis={makeAnalysis()} />)
+    expect(screen.getByText('result')).toBeTruthy()
   })
-  await act(async () => { fireEvent.click(screen.getByTitle('Fullscreen')) })
-  await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
-  expect(document.querySelector('[data-testid="fullscreen-overlay"]')).toBeNull()
-})
 
-test('calls mermaid.render a second time when fullscreen opens', async () => {
-  const mermaid = (await import('mermaid')).default
-  mermaid.render.mockClear()
-
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithDiagram} />)
+  it('renders nothing extra when business_purpose is absent', () => {
+    const analysisNoPurposeNoDesc = {
+      business_purpose: null,
+      input_contract: JSON.stringify([{ name: 'x', cobolName: 'X', type: 'string', direction: 'in' }]),
+      output_contract: JSON.stringify([]),
+    }
+    const { container } = render(<OverviewTab analysis={analysisNoPurposeNoDesc} />)
+    expect(container.querySelector('p')).toBeNull()
   })
-  expect(mermaid.render).toHaveBeenCalledTimes(1)
 
-  await act(async () => { fireEvent.click(screen.getByTitle('Fullscreen')) })
-  expect(mermaid.render).toHaveBeenCalledTimes(2)
-})
-
-const analysisWithCalls = {
-  description: 'Calls external programs.',
-  call_parameters: [],
-  diagram: null,
-  external_calls: [{ program: 'c_writelnkarea', using: 'PGM-NM' }],
-}
-
-test('renders external calls in overview when present', async () => {
-  await act(async () => {
-    render(<OverviewTab analysis={analysisWithCalls} />)
+  it('renders nothing for unparseable input_contract', () => {
+    render(<OverviewTab analysis={makeAnalysis({ input_contract: 'not json' })} />)
+    expect(screen.queryByText('Input Parameters')).toBeNull()
   })
-  expect(screen.getByText(/c_writelnkarea/)).toBeInTheDocument()
 })

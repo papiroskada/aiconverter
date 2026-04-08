@@ -54,37 +54,78 @@ describe('ConnectionsTab', () => {
   })
 })
 
-// --- External Calls section ---
+// --- External Dependencies section ---
 
-test('renders External Calls section with program (using) format', () => {
+test('renders External Dependencies section with program heading', () => {
   render(
     <ConnectionsTab
       edges={[]}
       programId="p1"
       onNavigate={() => {}}
-      analysis={{ external_calls: [
-        { program: 'c_writelnkarea', using: 'PGM-NM' },
-        { program: 'c_getplenv', using: 'WGET-USR' },
+      analysis={{ external_dependencies: [
+        { program: 'C_CURPID', purpose: 'Gets current process ID', dataIn: 'none', dataOut: 'process ID' },
       ]}}
     />
   )
-  expect(screen.getByText('c_writelnkarea (PGM-NM)')).toBeInTheDocument()
-  expect(screen.getByText('c_getplenv (WGET-USR)')).toBeInTheDocument()
+  expect(screen.getByText('C_CURPID')).toBeInTheDocument()
 })
 
-test('hides External Calls section when external_calls is empty', () => {
+test('renders External Dependencies purpose', () => {
   render(
     <ConnectionsTab
       edges={[]}
       programId="p1"
       onNavigate={() => {}}
-      analysis={{ external_calls: [] }}
+      analysis={{ external_dependencies: [
+        { program: 'C_CURPID', purpose: 'Gets current process ID', dataIn: 'none', dataOut: 'process ID' },
+      ]}}
     />
   )
-  expect(screen.queryByText(/external calls/i)).not.toBeInTheDocument()
+  expect(screen.getByText('Gets current process ID')).toBeInTheDocument()
 })
 
-test('hides External Calls section when analysis is null', () => {
+test('renders External Dependencies dataIn and dataOut', () => {
+  render(
+    <ConnectionsTab
+      edges={[]}
+      programId="p1"
+      onNavigate={() => {}}
+      analysis={{ external_dependencies: [
+        { program: 'C_CURPID', purpose: 'Gets current process ID', dataIn: 'none', dataOut: 'process ID' },
+      ]}}
+    />
+  )
+  expect(screen.getByText(/→ in: none/)).toBeInTheDocument()
+  expect(screen.getByText(/← out: process ID/)).toBeInTheDocument()
+})
+
+test('renders External Dependencies label with count', () => {
+  render(
+    <ConnectionsTab
+      edges={[]}
+      programId="p1"
+      onNavigate={() => {}}
+      analysis={{ external_dependencies: [
+        { program: 'C_CURPID', purpose: 'Gets current process ID', dataIn: 'none', dataOut: 'process ID' },
+      ]}}
+    />
+  )
+  expect(screen.getByText('External Dependencies (1)')).toBeInTheDocument()
+})
+
+test('hides External Dependencies section when external_dependencies is empty', () => {
+  render(
+    <ConnectionsTab
+      edges={[]}
+      programId="p1"
+      onNavigate={() => {}}
+      analysis={{ external_dependencies: [] }}
+    />
+  )
+  expect(screen.queryByText(/external dependencies/i)).not.toBeInTheDocument()
+})
+
+test('hides External Dependencies section when analysis is null', () => {
   render(
     <ConnectionsTab
       edges={[]}
@@ -93,18 +134,5 @@ test('hides External Calls section when analysis is null', () => {
       analysis={null}
     />
   )
-  expect(screen.queryByText(/external calls/i)).not.toBeInTheDocument()
-})
-
-test('renders External Call with no using param as program name only', () => {
-  render(
-    <ConnectionsTab
-      edges={[]}
-      programId="p1"
-      onNavigate={() => {}}
-      analysis={{ external_calls: [{ program: 'c_standalone', using: '' }] }}
-    />
-  )
-  expect(screen.getByText('c_standalone')).toBeInTheDocument()
-  expect(screen.queryByText('c_standalone ()')).not.toBeInTheDocument()
+  expect(screen.queryByText(/external dependencies/i)).not.toBeInTheDocument()
 })

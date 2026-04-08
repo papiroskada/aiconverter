@@ -39,7 +39,7 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
     emit('done', { programId })
   } catch (err) {
     if (err.name === 'AbortError') {
-      logger.info(programName, 'Analysis cancelled')
+      logger.done(programName, 'Analysis cancelled')
       await updateProgramStatus(programId, 'pending')
       emit('cancelled', { programId })
       return

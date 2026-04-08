@@ -62,7 +62,7 @@ function mapResult(spec) {
     business_purpose: spec.businessPurpose ?? '',
     input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
     output_contract:  JSON.stringify(params.filter(p => p.direction !== 'in')),
-    entry_points:          spec.entryPoints ?? [],
+    entry_points:          (spec.entryPoints ?? []).map(({ paragraphNames: _, ...ep }) => ep),
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
     db_tables: spec.dbTables ?? [],
