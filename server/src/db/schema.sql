@@ -41,19 +41,18 @@ CREATE TABLE IF NOT EXISTS programs (
 );
 
 CREATE TABLE IF NOT EXISTS program_analysis (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  program_id      UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
-  description     TEXT,
-  flow_narrative  TEXT,
-  input_contract  TEXT,
-  output_contract TEXT,
-  call_parameters JSONB NOT NULL DEFAULT '[]',
-  external_calls  JSONB NOT NULL DEFAULT '[]',
-  db_tables       JSONB NOT NULL DEFAULT '[]',
-  file_ops        JSONB NOT NULL DEFAULT '[]',
-  diagram         TEXT,
-  created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  program_id            UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  business_purpose      TEXT,
+  input_contract        TEXT,
+  output_contract       TEXT,
+  entry_points          JSONB NOT NULL DEFAULT '[]',
+  error_catalog         JSONB NOT NULL DEFAULT '[]',
+  external_dependencies JSONB NOT NULL DEFAULT '[]',
+  db_tables             JSONB NOT NULL DEFAULT '[]',
+  file_ops              JSONB NOT NULL DEFAULT '[]',
+  created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (program_id)
 );
 
@@ -82,3 +81,17 @@ CREATE TABLE IF NOT EXISTS program_edges (
   created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (from_program_id, to_program_name)
 );
+
+-- Migrate program_analysis to business-logic schema
+ALTER TABLE program_analysis
+  ADD COLUMN IF NOT EXISTS business_purpose      TEXT,
+  ADD COLUMN IF NOT EXISTS entry_points          JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS error_catalog         JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS external_dependencies JSONB NOT NULL DEFAULT '[]';
+
+ALTER TABLE program_analysis
+  DROP COLUMN IF EXISTS description,
+  DROP COLUMN IF EXISTS flow_narrative,
+  DROP COLUMN IF EXISTS call_parameters,
+  DROP COLUMN IF EXISTS external_calls,
+  DROP COLUMN IF EXISTS diagram;
