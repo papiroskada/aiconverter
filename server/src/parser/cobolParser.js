@@ -272,17 +272,17 @@ export function extractTuxTables(cobolText) {
 
   // Build prefix → tableName map from TABNAM declarations
   const prefixMap = new Map()
-  const tabnamRe = /(\w+)-TABNAM\b[^\n]*?"([a-z][a-z0-9]{0,7})"/g
+  const tabnamRe = /(\w+)-TABNAM\b[^\n]*?"([a-zA-Z][a-zA-Z0-9]{0,7})"/gi
   let m
   while ((m = tabnamRe.exec(normalised)) !== null) {
-    prefixMap.set(m[1].toUpperCase(), m[2])
+    prefixMap.set(m[1].toUpperCase(), m[2].toLowerCase())
   }
 
   // Also handle TABNAM declaration that spans onto the next line
-  const tabnamSplitRe = /(\w+)-TABNAM\b[^\n]*\n[^\n]*?"([a-z][a-z0-9]{0,7})"/g
+  const tabnamSplitRe = /(\w+)-TABNAM\b[^\n]*\n[^\n]*?"([a-zA-Z][a-zA-Z0-9]{0,7})"/gi
   while ((m = tabnamSplitRe.exec(normalised)) !== null) {
     const prefix = m[1].toUpperCase()
-    if (!prefixMap.has(prefix)) prefixMap.set(prefix, m[2])
+    if (!prefixMap.has(prefix)) prefixMap.set(prefix, m[2].toLowerCase())
   }
 
   if (prefixMap.size === 0) return []
