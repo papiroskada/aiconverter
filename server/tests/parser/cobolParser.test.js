@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -313,5 +313,97 @@ describe('extractWorkingStorage', () => {
     const src = `WORKING-STORAGE SECTION.\n 01 ws-flag PIC X.`
     const result = extractWorkingStorage(src)
     expect(result[0].name).toBe('WS-FLAG')
+  })
+})
+
+describe('extractTuxTables', () => {
+  it('returns empty array when no TUX tables', () => {
+    expect(extractTuxTables('PROCEDURE DIVISION.\n  MOVE 1 TO X.')).toEqual([])
+  })
+
+  it('extracts table with single operation', () => {
+    const cobol = `
+      10  EXREUR-TABNAM  PIC X(6)  VALUE "exreur".
+      10  EXREUR-FUNC    PIC X(3)  VALUE "OPN".
+      MOVE "RD"  TO EXREUR-FUNC.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].table).toBe('exreur')
+    expect(result[0].operation).toBe('READ')
+  })
+
+  it('merges multiple operations on same table', () => {
+    const cobol = `
+      10  EXTCNS-TABNAM  PIC X(6)  VALUE "extcns".
+      10  EXTCNS-FUNC    PIC X(3)  VALUE "OPN".
+      MOVE "RD"  TO EXTCNS-FUNC.
+      MOVE "DEL" TO EXTCNS-FUNC.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result[0].operation).toBe('READ/DELETE')
+  })
+
+  it('maps CTN/NXT/FWD to READ', () => {
+    const cobol = `
+      10  EXRPDA-TABNAM  PIC X(6)  VALUE "exrpda".
+      10  EXRPDA-FUNC    PIC X(3)  VALUE "OPN".
+      MOVE "CTN" TO EXRPDA-FUNC.
+      MOVE "NXT" TO EXRPDA-FUNC.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result[0].operation).toBe('READ')
+  })
+
+  it('handles multiple tables', () => {
+    const cobol = `
+      10  EXREUR-TABNAM  PIC X(6)  VALUE "exreur".
+      10  EXREUR-FUNC    PIC X(3)  VALUE "OPN".
+      10  EXRSEI-TABNAM  PIC X(6)  VALUE "exrsei".
+      10  EXRSEI-FUNC    PIC X(3)  VALUE "OPN".
+      MOVE "RD"  TO EXREUR-FUNC.
+      MOVE "RD"  TO EXRSEI-FUNC.
+      MOVE "INS" TO EXREUR-FUNC.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(2)
+    const eur = result.find(t => t.table === 'exreur')
+    expect(eur.operation).toBe('READ/INSERT')
+  })
+})
+
+describe('extractErrorSeqNos', () => {
+  it('returns empty array when no seq numbers', () => {
+    expect(extractErrorSeqNos('MOVE X TO Y.')).toEqual([])
+  })
+
+  it('extracts seq numbers from SCCGTERR-SEQ-NO assignments', () => {
+    const cobol = `
+      MOVE  2169  TO  SCCGTERR-SEQ-NO.
+      MOVE  6768  TO  SCCGTERR-SEQ-NO.
+    `
+    const result = extractErrorSeqNos(cobol)
+    expect(result).toContain(2169)
+    expect(result).toContain(6768)
+  })
+
+  it('extracts seq numbers from WS-SEQ-NO assignments', () => {
+    const cobol = `MOVE  1500  TO  WS-SEQ-NO.`
+    expect(extractErrorSeqNos(cobol)).toContain(1500)
+  })
+
+  it('deduplicates and sorts', () => {
+    const cobol = `
+      MOVE  2169  TO  SCCGTERR-SEQ-NO.
+      MOVE  1500  TO  WS-SEQ-NO.
+      MOVE  2169  TO  SCCGTERR-SEQ-NO.
+    `
+    const result = extractErrorSeqNos(cobol)
+    expect(result).toEqual([1500, 2169])
+  })
+
+  it('ignores 3-digit numbers', () => {
+    const cobol = `MOVE  999  TO  WS-SEQ-NO.`
+    expect(extractErrorSeqNos(cobol)).toEqual([])
   })
 })

@@ -60,6 +60,45 @@ function stripSequenceNumber(line) {
   return line.length > 6 ? line.substring(6) : ''
 }
 
+/**
+ * Clean COBOL source before sending to AI:
+ *   - strip 6-char sequence numbers (cols 1-6)
+ *   - remove comment / debug lines (col 7 = '*', '/', 'D')
+ *   - strip identification area (cols 73+) and trailing whitespace
+ *   - collapse consecutive blank lines
+ */
+export function preprocessCobol(text) {
+  const lines = text.split('\n')
+  const fixedFormat = detectFixedFormat(lines)
+  const processed = []
+
+  for (const line of lines) {
+    if (fixedFormat) {
+      const indicator = line.length > 6 ? line[6] : ' '
+      if (indicator === '*' || indicator === '/' || indicator === 'D' || indicator === 'd') continue
+      // strip sequence (cols 0-5) and identification area (cols 72+)
+      processed.push(line.substring(6, 72).trimEnd())
+    } else {
+      processed.push(line.trimEnd())
+    }
+  }
+
+  // collapse consecutive blank lines
+  const out = []
+  let prevBlank = false
+  for (const line of processed) {
+    const blank = line.trim() === ''
+    if (blank && prevBlank) continue
+    out.push(line)
+    prevBlank = blank
+  }
+  // trim leading/trailing blank lines
+  while (out.length && out[0].trim() === '') out.shift()
+  while (out.length && out[out.length - 1].trim() === '') out.pop()
+
+  return out.join('\n')
+}
+
 export function parseCobol(cobolText) {
   const lines = cobolText.split('\n')
   const rawChunks = []
@@ -214,6 +253,67 @@ export function extractExecSql(cobolText) {
     operation: [...e.ops].join('/'),
     fields: [],
   }))
+}
+
+const OP_ORDER = ['READ', 'INSERT', 'UPDATE', 'DELETE', 'WRITE']
+
+const TUX_OP_MAP = {
+  RD: 'READ', CTN: 'READ', NXT: 'READ', FWD: 'READ', SRT: 'READ',
+  INS: 'INSERT',
+  UPD: 'UPDATE',
+  DEL: 'DELETE',
+  WRT: 'WRITE', LCK: 'WRITE',
+}
+
+export function extractTuxTables(cobolText) {
+  const lines = cobolText.split('\n')
+  const fixedFormat = detectFixedFormat(lines)
+  const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l).join('\n')
+
+  // Build prefix → tableName map from TABNAM declarations
+  const prefixMap = new Map()
+  const tabnamRe = /(\w+)-TABNAM\b[^\n]*?"([a-z][a-z0-9]{0,7})"/g
+  let m
+  while ((m = tabnamRe.exec(normalised)) !== null) {
+    prefixMap.set(m[1].toUpperCase(), m[2])
+  }
+
+  // Also handle TABNAM declaration that spans onto the next line
+  const tabnamSplitRe = /(\w+)-TABNAM\b[^\n]*\n[^\n]*?"([a-z][a-z0-9]{0,7})"/g
+  while ((m = tabnamSplitRe.exec(normalised)) !== null) {
+    const prefix = m[1].toUpperCase()
+    if (!prefixMap.has(prefix)) prefixMap.set(prefix, m[2])
+  }
+
+  if (prefixMap.size === 0) return []
+
+  // Find all MOVE "OP" TO prefix-FUNC assignments
+  const tables = new Map()
+  const moveRe = /MOVE\s+"(RD|INS|UPD|DEL|CTN|NXT|FWD|SRT|WRT|LCK)"\s+TO\s+(\w+)-FUNC/gi
+  while ((m = moveRe.exec(normalised)) !== null) {
+    const opCode = m[1].toUpperCase()
+    const prefix = m[2].toUpperCase()
+    const tableName = prefixMap.get(prefix)
+    if (!tableName) continue
+    const op = TUX_OP_MAP[opCode]
+    if (!tables.has(tableName)) tables.set(tableName, new Set())
+    tables.get(tableName).add(op)
+  }
+
+  return [...tables.entries()].map(([table, ops]) => ({
+    table,
+    operation: OP_ORDER.filter(o => ops.has(o)).join('/'),
+  }))
+}
+
+export function extractErrorSeqNos(cobolText) {
+  const seqRe = /MOVE\s+(\d{4,5})\s+TO\s+\S*SEQ[-_]NO/gi
+  const seen = new Set()
+  let m
+  while ((m = seqRe.exec(cobolText)) !== null) {
+    seen.add(parseInt(m[1], 10))
+  }
+  return [...seen].sort((a, b) => a - b)
 }
 
 const KNOWN_CONSTRUCTS = [
