@@ -1,14 +1,14 @@
 import { writeFileSync, mkdirSync, readFileSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { parseCobol } from '../parser/cobolParser.js'
+import { parseCobol, preprocessCobol } from '../parser/cobolParser.js'
 import { getProvider } from '../ai/providers/base.js'
 import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
 import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms } from '../models/programs.js'
-import { upsertAnalysis, updateDiagram, updateAnalysisFields } from '../models/programAnalysis.js'
-import { insertChunks, getChunksByProgramId, updateChunkPurpose } from '../models/programChunks.js'
+import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
+import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -32,22 +32,9 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
   activeControllers.set(programId, controller)
   const provider = await getProvider(settings)
   try {
-    const {
-      description, flow_narrative, input_contract, output_contract,
-      external_calls, db_tables, file_ops, sections, diagram,
-    } = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
-
-    await upsertAnalysis({ program_id: programId, description, call_parameters: [], external_calls: [], db_tables: [] })
-    await updateAnalysisFields(programId, { external_calls, db_tables, file_ops, input_contract, output_contract, flow_narrative })
-    if (diagram != null) await updateDiagram(programId, diagram)
-
-    const chunkNameMap = new Map(savedChunks.map(c => [c.chunk_name, c.id]))
-    for (const section of sections) {
-      const chunkId = chunkNameMap.get(section.name)
-      if (chunkId) await updateChunkPurpose(chunkId, section.purpose, section.rules ?? [])
-    }
-
-    await updateGraphAfterAnalysis(programId, external_calls)
+    const result = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
+    await upsertBusinessAnalysis(programId, result)
+    await updateGraphAfterAnalysis(programId, (result.external_dependencies ?? []).map(d => ({ program: d.program, using: '' })))
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
     emit('done', { programId })
   } catch (err) {
@@ -79,7 +66,7 @@ export function cancelProgram(programId) {
 export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = null) {
   mkdirSync(UPLOADS_DIR, { recursive: true })
 
-  const cobolText = file.buffer.toString('utf8')
+  const cobolText = preprocessCobol(file.buffer.toString('utf8'))
   const programName = file.originalname.replace(/\.cbl$/i, '').toUpperCase()
 
   let program = await findProgramByName(programName)
@@ -129,7 +116,7 @@ export async function runProgramFromFile(programId, programSseEmitters, settings
   if (!program || !program.file_path) return
 
   await updateProgramStatus(programId, 'analyzing')
-  const cobolText = readFileSync(program.file_path, 'utf8')
+  const cobolText = preprocessCobol(readFileSync(program.file_path, 'utf8'))
   const savedChunks = await getChunksByProgramId(programId)
 
   const programEmit = makeEmit(programId, programSseEmitters)
@@ -153,7 +140,7 @@ export async function reanalyze(programId, sseEmitters) {
 
   if (!program.file_path) throw Object.assign(new Error('No source file found'), { status: 404 })
   await updateProgramStatus(programId, 'analyzing')
-  const cobolText = readFileSync(program.file_path, 'utf8')
+  const cobolText = preprocessCobol(readFileSync(program.file_path, 'utf8'))
   const existingChunks = await getChunksByProgramId(programId)
   const settings = await getSettings()
   const emit = makeEmit(programId, sseEmitters)
