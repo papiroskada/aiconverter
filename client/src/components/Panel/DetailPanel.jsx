@@ -1,111 +1,27 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { fetchProgram, deleteProgram } from '../../api/programs.js'
 import OverviewTab from './OverviewTab.jsx'
+import LogicTab from './LogicTab.jsx'
 import ConnectionsTab from './ConnectionsTab.jsx'
 import DataTab from './DataTab.jsx'
 
-const TABS = ['Overview', 'Connections', 'Data']
+const TABS = ['Overview', 'Logic', 'Connections', 'Data']
 const STATUS_COLOR = { analyzed: '#4ade80', analyzing: '#60a5fa', pending: '#475569', failed: '#f87171' }
 
-function eventIcon(event) {
-  if (event.message && (event.message.includes('failed') || event.stage === 'failed')) {
-    return { icon: '✗', color: '#f87171' }
-  }
-  if (event.durationMs != null) {
-    return { icon: '✓', color: '#4ade80' }
-  }
-  return { icon: '▶', color: '#94a3b8' }
-}
-
-function ProgressUI({ progressEvents, onCancel }) {
-  const logRef = useRef(null)
-
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
-  }, [progressEvents.length])
-
-  const latestStep = [...progressEvents].reverse().find(e => e.stage === 'step' && e.total)
-  const latestEvent = progressEvents[progressEvents.length - 1]
-  const progressPercent = latestStep
-    ? Math.round((latestStep.step / latestStep.total) * 100)
-    : null
-
-  const logEvents = progressEvents.filter(e => e.stage !== 'step')
-
+function ProgressUI({ step, total }) {
+  const pct = Math.round((step / total) * 100)
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>
-            {latestEvent ? latestEvent.message : 'Analyzing…'}
-          </div>
-          {onCancel && (
-            <button
-              onClick={onCancel}
-              style={{
-                background: '#451a03', border: '1px solid #7c2d12', color: '#fed7aa',
-                borderRadius: 5, padding: '2px 8px', fontSize: 11, cursor: 'pointer',
-              }}
-            >
-              Stop
-            </button>
-          )}
-        </div>
-        <div style={{ height: 4, background: '#0f172a', borderRadius: 2, overflow: 'hidden' }}>
-          {progressPercent != null ? (
-            <div style={{
-              height: '100%',
-              width: `${progressPercent}%`,
-              background: '#60a5fa',
-              borderRadius: 2,
-              transition: 'width 0.3s ease',
-            }} />
-          ) : (
-            <div style={{
-              height: '100%',
-              width: '40%',
-              background: '#60a5fa',
-              borderRadius: 2,
-              animation: 'pulse 1.5s ease-in-out infinite',
-            }} />
-          )}
-        </div>
-        {progressPercent != null && (
-          <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>
-            Step {latestStep.step} of {latestStep.total} ({progressPercent}%)
-          </div>
-        )}
+    <div>
+      <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>Analyzing…</div>
+      <div style={{ height: 4, background: '#0f172a', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: '#60a5fa', borderRadius: 2, transition: 'width 0.3s ease' }} />
       </div>
-      <div
-        ref={logRef}
-        style={{
-          maxHeight: 200,
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 3,
-          fontSize: 11,
-          fontFamily: 'monospace',
-        }}
-      >
-        {logEvents.map((event, i) => {
-          const { icon, color } = eventIcon(event)
-          const duration = event.durationMs != null ? ` (${event.durationMs}ms)` : ''
-          return (
-            <div key={i} style={{ display: 'flex', gap: 6, color: '#94a3b8' }}>
-              <span style={{ color, flexShrink: 0 }}>{icon}</span>
-              <span>{event.message}{duration}</span>
-            </div>
-          )
-        })}
-      </div>
+      <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>Step {step} of {total} ({pct}%)</div>
     </div>
   )
 }
 
-export default function DetailPanel({ programId, onClose, onNavigate, onDeleted, progressForId, progressEvents = [], refreshTrigger = 0, onCancel }) {
+export default function DetailPanel({ programId, onClose, onNavigate, onDeleted, stepProgress = new Map(), refreshTrigger = 0 }) {
   const [program, setProgram] = useState(null)
   const [tab, setTab] = useState('Overview')
   const [deleting, setDeleting] = useState(false)
@@ -158,7 +74,8 @@ export default function DetailPanel({ programId, onClose, onNavigate, onDeleted,
 
   if (!programId) return null
 
-  const isAnalyzing = programId === progressForId && progressEvents.length > 0
+  const stepData = stepProgress.get(programId)
+  const isAnalyzing = !!stepData
 
   return (
     <div style={{
@@ -218,14 +135,15 @@ export default function DetailPanel({ programId, onClose, onNavigate, onDeleted,
         )}
         {isAnalyzing && (
           <div style={{ marginBottom: 16 }}>
-            <ProgressUI progressEvents={progressEvents} onCancel={onCancel} />
+            <ProgressUI step={stepData.step} total={stepData.total} />
           </div>
         )}
         {!program ? <p style={{ color: '#64748b' }}>Loading…</p> : (
           <>
-            {tab === 'Overview' && <OverviewTab analysis={program.analysis} />}
-            {tab === 'Connections' && <ConnectionsTab edges={program.edges || []} programId={programId} onNavigate={onNavigate} analysis={program.analysis} />}
-            {tab === 'Data' && <DataTab analysis={program.analysis} />}
+            {tab === 'Overview'     && <OverviewTab analysis={program.analysis} />}
+            {tab === 'Logic'        && <LogicTab analysis={program.analysis} />}
+            {tab === 'Connections'  && <ConnectionsTab edges={program.edges || []} programId={programId} onNavigate={onNavigate} analysis={program.analysis} />}
+            {tab === 'Data'         && <DataTab analysis={program.analysis} />}
           </>
         )}
       </div>
