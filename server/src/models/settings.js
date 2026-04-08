@@ -6,10 +6,8 @@ const DEFAULTS = {
   openai_api_key: null,
   claude_model_interface: 'claude-sonnet-4-6',
   claude_model_rules: 'claude-haiku-4-5-20251001',
-  claude_model_diagram: 'claude-haiku-4-5-20251001',
   openai_model_interface: 'gpt-4o',
   openai_model_rules: 'gpt-4o-mini',
-  openai_model_diagram: 'gpt-4o-mini',
 }
 
 export async function getSettings() {

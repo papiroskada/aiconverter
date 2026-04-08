@@ -1,11 +1,7 @@
--- Drop and recreate types (idempotent reset)
-DROP TYPE IF EXISTS program_status CASCADE;
-DROP TYPE IF EXISTS chunk_type CASCADE;
-DROP TYPE IF EXISTS chunk_status CASCADE;
-
-CREATE TYPE program_status AS ENUM ('pending', 'analyzing', 'analyzed', 'failed');
-CREATE TYPE chunk_type AS ENUM ('data_summary', 'paragraph', 'sub_paragraph');
-CREATE TYPE chunk_status AS ENUM ('pending', 'done', 'failed');
+-- Create types if they don't already exist (safe for re-runs)
+DO $$ BEGIN CREATE TYPE program_status AS ENUM ('pending', 'analyzing', 'analyzed', 'failed'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+DO $$ BEGIN CREATE TYPE chunk_type AS ENUM ('data_summary', 'paragraph', 'sub_paragraph'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+DO $$ BEGIN CREATE TYPE chunk_status AS ENUM ('pending', 'done', 'failed'); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS applications (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -22,10 +18,8 @@ CREATE TABLE IF NOT EXISTS settings (
   openai_api_key         TEXT,
   claude_model_interface TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
   claude_model_rules     TEXT NOT NULL DEFAULT 'claude-haiku-4-5-20251001',
-  claude_model_diagram   TEXT NOT NULL DEFAULT 'claude-haiku-4-5-20251001',
   openai_model_interface TEXT NOT NULL DEFAULT 'gpt-4o',
   openai_model_rules     TEXT NOT NULL DEFAULT 'gpt-4o-mini',
-  openai_model_diagram   TEXT NOT NULL DEFAULT 'gpt-4o-mini',
   updated_at             TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -95,3 +89,16 @@ ALTER TABLE program_analysis
   DROP COLUMN IF EXISTS call_parameters,
   DROP COLUMN IF EXISTS external_calls,
   DROP COLUMN IF EXISTS diagram;
+
+-- Restore columns lost if the old DROP TYPE ... CASCADE was run
+ALTER TABLE programs
+  ADD COLUMN IF NOT EXISTS status program_status NOT NULL DEFAULT 'pending';
+
+ALTER TABLE program_chunks
+  ADD COLUMN IF NOT EXISTS chunk_type chunk_type NOT NULL DEFAULT 'paragraph',
+  ADD COLUMN IF NOT EXISTS status chunk_status NOT NULL DEFAULT 'pending';
+
+-- Remove obsolete diagram model settings
+ALTER TABLE settings
+  DROP COLUMN IF EXISTS claude_model_diagram,
+  DROP COLUMN IF EXISTS openai_model_diagram;
