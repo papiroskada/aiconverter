@@ -1,27 +1,20 @@
 import { logger } from '../logger.js'
 import { extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage } from '../parser/cobolParser.js'
 
+const TOKEN_LIMIT = 80000   // above this → two-step
+const MODEL_LIMIT = 100000  // above this → shrink snippets further
+
 function logAndEmit(emit, programName, type, data) {
   logger[type](programName, data.message, data.durationMs)
   emit('progress', data)
 }
 
-function extractSelectFiles(cobolText) {
-  return (cobolText.match(/SELECT\s+\S+\s+ASSIGN[^\n]*/gi) ?? [])
-}
-
-export function isComplex(chunk) {
-  const text = chunk.cobol_text.toUpperCase()
-  const lines = text.split('\n')
-  if (lines.length > 30) return true
-  if (text.includes('EVALUATE')) return true
-  const ifCount = (text.match(/(?<![A-Z0-9-])IF(?![A-Z0-9-])/g) ?? []).length
-  if (ifCount >= 2) return true
-  return false
-}
-
 export function estimateTokens(text) {
   return Math.ceil(text.length / 4)
+}
+
+function extractSelectFiles(cobolText) {
+  return (cobolText.match(/SELECT\s+\S+\s+ASSIGN[^\n]*/gi) ?? [])
 }
 
 function formatWsVars(wsVars) {
@@ -33,30 +26,13 @@ function formatWsVars(wsVars) {
   }).join('\n')
 }
 
-function buildInterfaceContext(linkage, paragraphChunks, calls, execSqlTables, selectFiles, constructs, wsVars, adaptive = true) {
-  const paragraphList = paragraphChunks
-    .map(c => {
-      const text = (adaptive && isComplex(c))
-        ? c.cobol_text
-        : c.cobol_text.split('\n').slice(0, 5).join('\n')
-      return `[${c.chunk_name}]\n${text}`
-    })
-    .join('\n\n')
-
-  const callList = calls.map(c =>
-    `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`
-  ).join('\n') || '  (none)'
-
+function buildStructural(linkage, calls, execSqlTables, selectFiles, constructs, wsVars) {
+  const callList = calls.map(c => `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`).join('\n') || '  (none)'
   const fileList = selectFiles.join('\n') || '  (none)'
-
-  const sqlList = execSqlTables.map(t =>
-    `  ${t.table}: ${t.operation}`
-  ).join('\n') || '  (none)'
-
+  const sqlList  = execSqlTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
   return [
     `LINKAGE SECTION:\n${linkage || '(none)'}`,
     `WORKING-STORAGE VARIABLES:\n${formatWsVars(wsVars)}`,
-    `PARAGRAPHS (name + code):\n${paragraphList || '(none)'}`,
     `CALL STATEMENTS:\n${callList}`,
     `FILE I/O (SELECT statements):\n${fileList}`,
     `DATABASE OPERATIONS (EXEC SQL):\n${sqlList}`,
@@ -64,112 +40,103 @@ function buildInterfaceContext(linkage, paragraphChunks, calls, execSqlTables, s
   ].join('\n\n')
 }
 
-export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal, tokenLimit = 80000 }) {
-  const paragraphChunks = chunks.filter(
-    c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph'
-  )
+function buildContext(structural, paragraphChunks, linesPerParagraph = Infinity) {
+  const paragraphList = paragraphChunks.map(c => {
+    const lines = linesPerParagraph === Infinity
+      ? c.cobol_text
+      : c.cobol_text.split('\n').slice(0, linesPerParagraph).join('\n')
+    return `[${c.chunk_name}]\n${lines}`
+  }).join('\n\n')
+  return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
+}
 
-  const linkage = extractLinkage(cobolText)
-  const wsVars = extractWorkingStorage(cobolText)
-  const calls = extractCalls(cobolText)
+function buildEntryPointContext(structural, paragraphChunks, paragraphNames) {
+  const relevant = paragraphChunks.filter(c => paragraphNames.includes(c.chunk_name))
+  const paragraphList = relevant.map(c => `[${c.chunk_name}]\n${c.cobol_text}`).join('\n\n')
+  return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
+}
+
+function mapResult(spec) {
+  const params = spec.parameters ?? []
+  return {
+    business_purpose: spec.businessPurpose ?? '',
+    input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
+    output_contract:  JSON.stringify(params.filter(p => p.direction !== 'in')),
+    entry_points:          spec.entryPoints ?? [],
+    error_catalog:         spec.errorCatalog ?? [],
+    external_dependencies: spec.externalDependencies ?? [],
+    db_tables: spec.dbTables ?? [],
+    file_ops:  (spec.fileIO ?? []).map(f => ({ file: f.file, operations: f.operations })),
+  }
+}
+
+export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal }) {
+  const paragraphChunks = chunks.filter(c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph')
+
+  const linkage       = extractLinkage(cobolText)
+  const wsVars        = extractWorkingStorage(cobolText)
+  const calls         = extractCalls(cobolText)
   const execSqlTables = extractExecSql(cobolText)
-  const constructs = extractConstructs(cobolText)
-  const selectFiles = extractSelectFiles(cobolText)
+  const constructs    = extractConstructs(cobolText)
+  const selectFiles   = extractSelectFiles(cobolText)
 
-  const complexChunks = paragraphChunks.filter(isComplex)
-  const complexNames = new Set(complexChunks.map(c => c.chunk_name))
+  const structural = buildStructural(linkage, calls, execSqlTables, selectFiles, constructs, wsVars)
+  const fullContext = buildContext(structural, paragraphChunks)
 
-  const adaptiveContext = buildInterfaceContext(
-    linkage, paragraphChunks, calls, execSqlTables, selectFiles, constructs, wsVars, true
-  )
-
-  const needsTwoPass = estimateTokens(adaptiveContext) > tokenLimit
-  const totalSteps = (needsTwoPass && complexChunks.length > 0) ? 3 : 2
-
-  const ti = Date.now()
-  logAndEmit(emit, programName, 'start', { stage: 'interface', message: 'Analysing interface...' })
-  emit('progress', { stage: 'step', step: 1, total: totalSteps })
+  logAndEmit(emit, programName, 'start', { stage: 'analysis', message: 'Analysing business logic...' })
+  emit('progress', { stage: 'step', step: 1, total: 2 })
 
   if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
 
   let spec
-  if (!needsTwoPass) {
-    spec = await provider.extractInterface(adaptiveContext, signal)
-  } else {
-    const snippetContext = buildInterfaceContext(
-      linkage, paragraphChunks, calls, execSqlTables, selectFiles, constructs, wsVars, false
-    )
-    spec = await provider.extractInterface(snippetContext, signal)
 
-    if (complexChunks.length > 0) {
-      if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
-      emit('progress', { stage: 'step', step: 2, total: totalSteps })
-      try {
-        const complexContext = complexChunks
-          .map(c => `[${c.chunk_name}]\n${c.cobol_text}`)
-          .join('\n\n')
-        const pass2Results = await provider.extractRules(complexContext, signal)
-        const rulesMap = new Map(pass2Results.map(r => [r.name, r.rules]))
-        spec = {
-          ...spec,
-          sections: (spec.sections ?? []).map(section => ({
-            ...section,
-            rules: complexNames.has(section.name)
-              ? (rulesMap.get(section.name) ?? [])
-              : (section.rules ?? []),
-          })),
-        }
-      } catch (err) {
-        if (err.name === 'AbortError') throw err
-        logger.error(programName, `Rules extraction failed (non-fatal): ${err.message}`)
-      }
+  if (estimateTokens(fullContext) <= TOKEN_LIMIT) {
+    // ── Small file: one call with full paragraph code ──────────────────────
+    spec = await provider.extractBusinessAnalysis(fullContext, signal)
+  } else {
+    // ── Large file: two-step ───────────────────────────────────────────────
+    const snippetLines = estimateTokens(buildContext(structural, paragraphChunks, 5)) > MODEL_LIMIT ? 3 : 5
+    const snippetContext = buildContext(structural, paragraphChunks, snippetLines)
+
+    logAndEmit(emit, programName, 'start', {
+      stage: 'analysis',
+      message: `Large file — step 1: identifying entry points (${snippetLines}-line snippets)`,
+    })
+
+    spec = await provider.extractBusinessAnalysis(snippetContext, signal)
+
+    const entryPoints = spec.entryPoints ?? []
+    if (entryPoints.length > 0) {
+      logAndEmit(emit, programName, 'start', {
+        stage: 'analysis',
+        message: `Step 2: analysing ${entryPoints.length} entry point(s) in detail`,
+      })
+
+      emit('progress', { stage: 'step', step: 2, total: 2 })
+
+      // parallel detail analysis per entry point
+      const detailed = await Promise.all(
+        entryPoints.map(async (ep) => {
+          if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+          const names = ep.paragraphNames ?? []
+          if (names.length === 0) return ep
+          try {
+            const epContext = buildEntryPointContext(structural, paragraphChunks, names)
+            const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal)
+            return { ...ep, ...detail, paragraphNames: undefined }
+          } catch (err) {
+            if (err.name === 'AbortError') throw err
+            logger.error(programName, `Entry point detail failed for "${ep.businessName}": ${err.message}`)
+            return { ...ep, paragraphNames: undefined }
+          }
+        })
+      )
+      spec = { ...spec, entryPoints: detailed }
     }
   }
 
-  logAndEmit(emit, programName, 'done', {
-    stage: 'interface', message: 'Interface done', durationMs: Date.now() - ti,
-  })
+  logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
+  emit('progress', { stage: 'step', step: 2, total: 2 })
 
-  // Map to storage shape
-  const external_calls = (spec.externalCalls ?? []).map(c => ({
-    program: c.program,
-    using: c.using ?? '',
-  }))
-  const db_tables = spec.dbTables ?? []
-  const file_ops = (spec.fileIO ?? []).map(f => ({ file: f.file, operations: f.operations }))
-  const input_contract = JSON.stringify(
-    (spec.parameters ?? []).filter(p => p.direction !== 'out')
-  )
-  const output_contract = JSON.stringify(
-    (spec.parameters ?? []).filter(p => p.direction !== 'in')
-  )
-
-  // Step 2/3: Diagram
-  if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
-  emit('progress', { stage: 'step', step: totalSteps, total: totalSteps })
-
-  const td = Date.now()
-  logAndEmit(emit, programName, 'start', { stage: 'diagram', message: 'Generating diagram...' })
-  let diagram = null
-  try {
-    diagram = await provider.generateDiagram(spec.flow_narrative ?? spec.description ?? '', signal)
-    logAndEmit(emit, programName, 'done', { stage: 'diagram', message: 'Diagram done', durationMs: Date.now() - td })
-  } catch (err) {
-    if (err.name === 'AbortError') throw err
-    logAndEmit(emit, programName, 'error', {
-      stage: 'diagram', message: `Diagram failed: ${err.message}`, durationMs: Date.now() - td,
-    })
-  }
-
-  return {
-    description: spec.description ?? '',
-    flow_narrative: spec.flow_narrative ?? '',
-    input_contract,
-    output_contract,
-    external_calls,
-    db_tables,
-    file_ops,
-    sections: spec.sections ?? [],
-    diagram,
-  }
+  return mapResult(spec)
 }
