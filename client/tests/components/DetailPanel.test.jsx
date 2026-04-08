@@ -16,107 +16,58 @@ vi.mock('../../src/api/programs.js', () => ({
 
 const noop = () => {}
 
-test('shows progress bar and log feed when programId matches progressForId', async () => {
-  const events = [
-    { stage: 'parsing', message: 'Parsing COBOL file...' },
-    { stage: 'parsing', message: 'Parsed 5 chunks', durationMs: 200 },
-    { stage: 'metadata', message: 'Analyzing metadata...' },
-  ]
+test('shows progress bar when programId is in stepProgress', async () => {
+  const stepProgress = new Map([['abc', { step: 1, total: 2 }]])
 
   render(
     <DetailPanel
       programId="abc"
-      progressForId="abc"
-      progressEvents={events}
+      stepProgress={stepProgress}
       onClose={noop}
       onNavigate={noop}
     />
   )
   await act(async () => {})
 
-  // Progress log entries should be visible (using getAllByText to handle duplication in label and log)
-  expect(screen.getAllByText(/Parsing COBOL file/).length).toBeGreaterThan(0)
-  expect(screen.getAllByText(/Parsed 5 chunks/).length).toBeGreaterThan(0)
-  expect(screen.getAllByText(/Analyzing metadata/).length).toBeGreaterThan(0)
+  expect(screen.getByText('Analyzing…')).toBeInTheDocument()
+  expect(screen.getByText('Step 1 of 2 (50%)')).toBeInTheDocument()
 })
 
-test('shows done-type entries with ✓ icon', async () => {
-  const events = [
-    { stage: 'parsing', message: 'Parsed 5 chunks', durationMs: 200 },
-  ]
+test('does not show progress UI when programId not in stepProgress', async () => {
+  const stepProgress = new Map([['other-id', { step: 1, total: 2 }]])
 
   render(
     <DetailPanel
       programId="abc"
-      progressForId="abc"
-      progressEvents={events}
+      stepProgress={stepProgress}
       onClose={noop}
       onNavigate={noop}
     />
   )
   await act(async () => {})
 
-  expect(screen.getByText('✓')).toBeInTheDocument()
+  expect(screen.queryByText('Analyzing…')).not.toBeInTheDocument()
 })
 
-test('shows error-type entries with ✗ icon', async () => {
-  const events = [
-    { stage: 'chunk', message: 'Chunk 1/5 failed: timeout', chunkIndex: 1, total: 5, durationMs: 2000 },
-  ]
-
+test('does not show progress UI when stepProgress is empty', async () => {
   render(
     <DetailPanel
       programId="abc"
-      progressForId="abc"
-      progressEvents={events}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
   )
   await act(async () => {})
 
-  expect(screen.getByText('✗')).toBeInTheDocument()
-  expect(screen.getAllByText(/Chunk 1\/5 failed/).length).toBeGreaterThan(0)
-})
-
-test('does not show progress UI when programId does not match progressForId', async () => {
-  render(
-    <DetailPanel
-      programId="abc"
-      progressForId="different-id"
-      progressEvents={[{ stage: 'parsing', message: 'Parsing...' }]}
-      onClose={noop}
-      onNavigate={noop}
-    />
-  )
-  await act(async () => {})
-
-  expect(screen.queryByText('Parsing...')).not.toBeInTheDocument()
-})
-
-test('does not show progress UI when progressEvents is empty', async () => {
-  render(
-    <DetailPanel
-      programId="abc"
-      progressForId="abc"
-      progressEvents={[]}
-      onClose={noop}
-      onNavigate={noop}
-    />
-  )
-  await act(async () => {})
-
-  // No log entries rendered
-  expect(screen.queryByText('✓')).not.toBeInTheDocument()
-  expect(screen.queryByText('▶')).not.toBeInTheDocument()
+  expect(screen.queryByText('Analyzing…')).not.toBeInTheDocument()
 })
 
 test('disables delete button while program is analyzing', async () => {
   render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
@@ -133,8 +84,7 @@ test('restores panel width from localStorage on mount', async () => {
   const { container } = render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
@@ -150,8 +100,7 @@ test('defaults panel width to 340 when localStorage is empty', async () => {
   const { container } = render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
@@ -165,8 +114,7 @@ test('clamps panel width to minimum 280 during resize', async () => {
   const { container } = render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
@@ -186,8 +134,7 @@ test('clamps panel width to maximum 600 during resize', async () => {
   const { container } = render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
@@ -208,8 +155,7 @@ test('persists panel width to localStorage on mouseup', async () => {
   const { container } = render(
     <DetailPanel
       programId="abc"
-      progressForId={null}
-      progressEvents={[]}
+      stepProgress={new Map()}
       onClose={noop}
       onNavigate={noop}
     />
