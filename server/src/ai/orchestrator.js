@@ -1,5 +1,5 @@
 import { logger } from '../logger.js'
-import { extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage } from '../parser/cobolParser.js'
+import { extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos } from '../parser/cobolParser.js'
 
 const TOKEN_LIMIT = 80000   // above this → two-step
 const MODEL_LIMIT = 100000  // above this → shrink snippets further
@@ -26,26 +26,40 @@ function formatWsVars(wsVars) {
   }).join('\n')
 }
 
-function buildStructural(linkage, calls, execSqlTables, selectFiles, constructs, wsVars) {
+function buildStructural(linkage, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorSeqNos) {
   const callList = calls.map(c => `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`).join('\n') || '  (none)'
   const fileList = selectFiles.join('\n') || '  (none)'
   const sqlList  = execSqlTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
+  const tuxList  = tuxTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
+  const errList  = errorSeqNos.length ? errorSeqNos.join(', ') : 'none'
   return [
     `LINKAGE SECTION:\n${linkage || '(none)'}`,
     `WORKING-STORAGE VARIABLES:\n${formatWsVars(wsVars)}`,
     `CALL STATEMENTS:\n${callList}`,
     `FILE I/O (SELECT statements):\n${fileList}`,
     `DATABASE OPERATIONS (EXEC SQL):\n${sqlList}`,
+    `DATABASE OPERATIONS (TUX MIDDLEWARE):\n${tuxList}`,
     `CONSTRUCTS USED: ${constructs.join(', ') || 'none'}`,
+    `ERROR SEQUENCE NUMBERS FOUND IN CODE: ${errList}`,
   ].join('\n\n')
+}
+
+function hasEvaluate(chunk) {
+  return /\bEVALUATE\b/i.test(chunk.cobol_text)
 }
 
 function buildContext(structural, paragraphChunks, linesPerParagraph = Infinity) {
   const paragraphList = paragraphChunks.map(c => {
-    const lines = linesPerParagraph === Infinity
-      ? c.cobol_text
-      : c.cobol_text.split('\n').slice(0, linesPerParagraph).join('\n')
-    return `[${c.chunk_name}]\n${lines}`
+    let text
+    if (linesPerParagraph === Infinity) {
+      text = c.cobol_text
+    } else if (hasEvaluate(c)) {
+      // Always show dispatch paragraphs in full so AI sees the mode structure
+      text = c.cobol_text
+    } else {
+      text = c.cobol_text.split('\n').slice(0, linesPerParagraph).join('\n')
+    }
+    return `[${c.chunk_name}]\n${text}`
   }).join('\n\n')
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
@@ -79,8 +93,10 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   const execSqlTables = extractExecSql(cobolText)
   const constructs    = extractConstructs(cobolText)
   const selectFiles   = extractSelectFiles(cobolText)
+  const tuxTables    = extractTuxTables(cobolText)
+  const errorSeqNos  = extractErrorSeqNos(cobolText)
 
-  const structural = buildStructural(linkage, calls, execSqlTables, selectFiles, constructs, wsVars)
+  const structural = buildStructural(linkage, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorSeqNos)
   const fullContext = buildContext(structural, paragraphChunks)
 
   logAndEmit(emit, programName, 'start', { stage: 'analysis', message: 'Analysing business logic...' })

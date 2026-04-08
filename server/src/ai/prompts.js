@@ -51,14 +51,14 @@ Return ONLY valid JSON matching this schema exactly:
 
 Rules:
 - businessPurpose: one sentence, business domain language, not code language
-- parameters: extract from LINKAGE SECTION only
-- entryPoints: if program dispatches on a parameter (EVALUATE/IF on FUNC, MODE, ACTION etc.) create one entry per value; if no dispatch create one entry with condition "always"
+- parameters: extract from LINKAGE SECTION only; infer type from PIC clause (PIC X = string, PIC 9 = number, PIC X/9 group = object)
+- entryPoints: look for EVALUATE or IF blocks dispatching on a linkage/input parameter (FUNC, MODE, PRS-MD, ACTION, etc.); create one entry per WHEN value; if no dispatch create one entry with condition "always"
 - entryPoints[].paragraphNames: list ALL paragraph names relevant to this entry point (for large-file second-pass use)
-- entryPoints[].steps: WHAT HAPPENS FOR THE BUSINESS, not code mechanics — "validates user credentials", not "performs VALIDATE-CREDS paragraph"
+- entryPoints[].steps: WHAT HAPPENS FOR THE BUSINESS, not code mechanics — "validates user credentials", not "performs VALIDATE-CREDS paragraph"; use numbered pseudocode if possible
 - entryPoints[].sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
-- errorCatalog: every error code, status value, or failure condition with its business meaning
-- externalDependencies: every CALL statement — describe WHY it is called and what data flows in/out
-- dbTables: confirm and enrich SQL tables from context; return [] if none
+- errorCatalog: use ERROR SEQUENCE NUMBERS FOUND IN CODE as the canonical list; include every code found; describe businessMeaning and systemAction from context
+- externalDependencies: only include CALLS that represent meaningful business operations; EXCLUDE infrastructure/utility calls whose names start with C_ (e.g. C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — these are middleware boilerplate not business logic
+- dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE) from context; return [] if none in either section
 - fileIO: file I/O from SELECT/ASSIGN and OPEN/READ/WRITE/CLOSE; return [] if none
 `
 
@@ -81,5 +81,5 @@ Rules:
 - steps: WHAT HAPPENS FOR THE BUSINESS in this operation, not code mechanics
 - sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - returns: what output parameters or status values are set on success
-- errors: every error code or failure condition specific to this operation
+- errors: reference the ERROR SEQUENCE NUMBERS from context — use actual seq numbers (e.g. "2169: license expired") not generic descriptions
 `
