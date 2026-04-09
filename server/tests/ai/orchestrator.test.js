@@ -169,3 +169,57 @@ describe('runAnalysis — large file two-step', () => {
     expect(result.entry_points[0].paragraphNames).toBeUndefined()
   })
 })
+
+describe('runAnalysis — context content', () => {
+  it('includes LINKAGE SECTION VARIABLES with direction in context', async () => {
+    const provider = makeProvider()
+    const cobolText = 'DATA DIVISION.\nLINKAGE SECTION.\n 01 CPSRI-PART-ID PIC X(8).\n 01 CPSRO-RTN-STS PIC 9(4).\nPROCEDURE DIVISION.'
+    await runAnalysis({ cobolText, chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const ctx = provider.extractBusinessAnalysis.mock.calls[0][0]
+    expect(ctx).toContain('LINKAGE SECTION VARIABLES')
+    expect(ctx).toContain('CPSRI-PART-ID')
+    expect(ctx).toContain('[in]')
+    expect(ctx).toContain('[out]')
+  })
+
+  it('includes ENTRY POINT DISPATCH in context when EVALUATE present', async () => {
+    const cobolText = `PROCEDURE DIVISION.\nDISPATCH.\n  EVALUATE WS-MODE\n    WHEN "1"\n      PERFORM DO-ONE\n  END-EVALUATE.`
+    const chunks = [
+      { chunk_name: 'DISPATCH', chunk_type: 'paragraph', cobol_text: 'EVALUATE WS-MODE\n  WHEN "1"\n    PERFORM DO-ONE\nEND-EVALUATE' },
+    ]
+    const provider = makeProvider()
+    await runAnalysis({ cobolText, chunks, provider, emit: () => {}, programName: 'T' })
+    const ctx = provider.extractBusinessAnalysis.mock.calls[0][0]
+    expect(ctx).toContain('ENTRY POINT DISPATCH')
+    expect(ctx).toContain('WS-MODE')
+  })
+
+  it('includes ERROR ENTRIES with data elements in context', async () => {
+    const cobolText = `PROCEDURE DIVISION.\nMAIN.\n  MOVE "PRS-MD" TO SCCGTERR-DATA-EL.\n  MOVE 1500 TO SCCGTERR-SEQ-NO.`
+    const provider = makeProvider()
+    await runAnalysis({ cobolText, chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const ctx = provider.extractBusinessAnalysis.mock.calls[0][0]
+    expect(ctx).toContain('ERROR ENTRIES')
+    expect(ctx).toContain('1500')
+    expect(ctx).toContain('PRS-MD')
+  })
+
+  it('includes PRE-DISPATCH PARAGRAPHS in context when present', async () => {
+    const cobolText = 'PROCEDURE DIVISION.'
+    const chunks = [
+      {
+        chunk_name: 'BUSINESS-LOGIC',
+        chunk_type: 'paragraph',
+        cobol_text: 'BUSINESS-LOGIC.\n  PERFORM VALIDATE-LINKAGE.\n  PERFORM INITIAL-SETUP.\n  EVALUATE WS-MODE\n    WHEN "1"\n      PERFORM DO-ONE\n  END-EVALUATE.',
+      },
+      { chunk_name: 'VALIDATE-LINKAGE', chunk_type: 'paragraph', cobol_text: 'VALIDATE-LINKAGE.\n  IF WS-MODE = SPACES MOVE 1500 TO WS-SEQ-NO.' },
+      { chunk_name: 'INITIAL-SETUP', chunk_type: 'paragraph', cobol_text: 'INITIAL-SETUP.\n  MOVE SPACES TO WS-OUT.' },
+    ]
+    const provider = makeProvider()
+    await runAnalysis({ cobolText, chunks, provider, emit: () => {}, programName: 'T' })
+    const ctx = provider.extractBusinessAnalysis.mock.calls[0][0]
+    expect(ctx).toContain('PRE-DISPATCH PARAGRAPHS')
+    expect(ctx).toContain('VALIDATE-LINKAGE')
+    expect(ctx).toContain('INITIAL-SETUP')
+  })
+})

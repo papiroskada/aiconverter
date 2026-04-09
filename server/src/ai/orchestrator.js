@@ -1,5 +1,5 @@
 import { logger } from '../logger.js'
-import { extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos } from '../parser/cobolParser.js'
+import { extractLinkageVars, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorEntries, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../parser/cobolParser.js'
 
 const TOKEN_LIMIT = 80000   // above this → two-step
 const MODEL_LIMIT = 100000  // above this → shrink snippets further
@@ -26,21 +26,62 @@ function formatWsVars(wsVars) {
   }).join('\n')
 }
 
-function buildStructural(linkage, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorSeqNos) {
+function formatLinkageVars(linkageVars) {
+  if (!linkageVars.length) return '  (none)'
+  return linkageVars.map(v => {
+    const dir = v.direction ? ` [${v.direction}]` : ''
+    const header = `  ${v.level} ${v.name}${v.pic ? ` (${v.pic})` : ''}${dir}`
+    const conditions = v.conditions.map(c => `     88 ${c.name} = ${c.value}`).join('\n')
+    return conditions ? `${header}\n${conditions}` : header
+  }).join('\n')
+}
+
+// CAPI Rule 22a: paragraphs PERFORMed before the EVALUATE dispatch run before
+// every mode and must be included in every entry point's context.
+function findPreDispatchParagraphs(paragraphChunks) {
+  const dispatchChunk = paragraphChunks.find(c => /\bEVALUATE\b/i.test(c.cobol_text))
+  if (!dispatchChunk) return []
+
+  const preDispatch = []
+  for (const line of dispatchChunk.cobol_text.split('\n')) {
+    if (/\bEVALUATE\b/i.test(line)) break
+    const m = line.match(/\bPERFORM\s+([A-Z][A-Z0-9-]+)/i)
+    if (m) {
+      const name = m[1].toUpperCase()
+      if (!['UNTIL', 'VARYING', 'TIMES', 'WITH', 'THRU', 'THROUGH', 'TEST'].includes(name)) {
+        preDispatch.push(name)
+      }
+    }
+  }
+  return [...new Set(preDispatch)]
+}
+
+function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames) {
   const callList = calls.map(c => `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`).join('\n') || '  (none)'
   const fileList = selectFiles.join('\n') || '  (none)'
   const sqlList  = execSqlTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
   const tuxList  = tuxTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
-  const errList  = errorSeqNos.length ? errorSeqNos.join(', ') : 'none'
+  const errList  = errorEntries.length
+    ? errorEntries.map(e => e.dataElement ? `${e.seqNo} (${e.dataElement})` : `${e.seqNo}`).join(', ')
+    : 'none'
+  const dispatchList = evaluateDispatch.length
+    ? evaluateDispatch.map(d =>
+        `  EVALUATE ${d.evaluateSubject}:\n${d.entries.map(e => `    WHEN ${e.whenValue} → PERFORM ${e.performParagraph}`).join('\n')}`
+      ).join('\n')
+    : '  (none)'
+  const preList = preDispatchNames.length ? preDispatchNames.join(', ') : '(none)'
+
   return [
-    `LINKAGE SECTION:\n${linkage || '(none)'}`,
+    `LINKAGE SECTION VARIABLES:\n${formatLinkageVars(linkageVars)}`,
     `WORKING-STORAGE VARIABLES:\n${formatWsVars(wsVars)}`,
     `CALL STATEMENTS:\n${callList}`,
     `FILE I/O (SELECT statements):\n${fileList}`,
     `DATABASE OPERATIONS (EXEC SQL):\n${sqlList}`,
     `DATABASE OPERATIONS (TUX MIDDLEWARE):\n${tuxList}`,
     `CONSTRUCTS USED: ${constructs.join(', ') || 'none'}`,
-    `ERROR SEQUENCE NUMBERS FOUND IN CODE: ${errList}`,
+    `ENTRY POINT DISPATCH:\n${dispatchList}`,
+    `PRE-DISPATCH PARAGRAPHS (shared by all entry points, run before every mode): ${preList}`,
+    `ERROR ENTRIES: ${errList}`,
   ].join('\n\n')
 }
 
@@ -64,8 +105,15 @@ function buildContext(structural, paragraphChunks, linesPerParagraph = Infinity)
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
 
-function buildEntryPointContext(structural, paragraphChunks, paragraphNames) {
-  const relevant = paragraphChunks.filter(c => paragraphNames.includes(c.chunk_name))
+function buildEntryPointContext(structural, paragraphChunks, paragraphNames, performGraph, preDispatchNames) {
+  // Always include pre-dispatch paragraphs + transitively expand all names (CAPI Rule 22a + 22b)
+  const allNames = new Set([...preDispatchNames, ...paragraphNames])
+  for (const name of [...allNames]) {
+    for (const dep of resolveTransitive(name, performGraph)) {
+      allNames.add(dep)
+    }
+  }
+  const relevant = paragraphChunks.filter(c => allNames.has(c.chunk_name))
   const paragraphList = relevant.map(c => `[${c.chunk_name}]\n${c.cobol_text}`).join('\n\n')
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
@@ -87,16 +135,19 @@ function mapResult(spec) {
 export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal }) {
   const paragraphChunks = chunks.filter(c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph')
 
-  const linkage       = extractLinkage(cobolText)
-  const wsVars        = extractWorkingStorage(cobolText)
-  const calls         = extractCalls(cobolText)
-  const execSqlTables = extractExecSql(cobolText)
-  const constructs    = extractConstructs(cobolText)
-  const selectFiles   = extractSelectFiles(cobolText)
-  const tuxTables    = extractTuxTables(cobolText)
-  const errorSeqNos  = extractErrorSeqNos(cobolText)
+  const linkageVars      = extractLinkageVars(cobolText)
+  const wsVars           = extractWorkingStorage(cobolText)
+  const calls            = extractCalls(cobolText)
+  const execSqlTables    = extractExecSql(cobolText)
+  const constructs       = extractConstructs(cobolText)
+  const selectFiles      = extractSelectFiles(cobolText)
+  const tuxTables        = extractTuxTables(cobolText)
+  const errorEntries     = extractErrorEntries(cobolText)
+  const evaluateDispatch = extractEvaluateDispatch(cobolText)
+  const performGraph     = extractPerformGraph(paragraphChunks)
+  const preDispatchNames = findPreDispatchParagraphs(paragraphChunks)
 
-  const structural = buildStructural(linkage, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorSeqNos)
+  const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames)
   const fullContext = buildContext(structural, paragraphChunks)
 
   logAndEmit(emit, programName, 'start', { stage: 'analysis', message: 'Analysing business logic...' })
@@ -137,7 +188,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
           const names = ep.paragraphNames ?? []
           if (names.length === 0) return ep
           try {
-            const epContext = buildEntryPointContext(structural, paragraphChunks, names)
+            const epContext = buildEntryPointContext(structural, paragraphChunks, names, performGraph, preDispatchNames)
             const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal)
             return { ...ep, ...detail, paragraphNames: undefined }
           } catch (err) {
