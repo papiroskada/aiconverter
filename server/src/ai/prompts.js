@@ -51,15 +51,20 @@ Return ONLY valid JSON matching this schema exactly:
 
 Rules:
 - businessPurpose: one sentence, business domain language, not code language
-- parameters: extract from LINKAGE SECTION only; infer type from PIC clause (PIC X = string, PIC 9 = number, PIC X/9 group = object)
-- entryPoints: look for EVALUATE or IF blocks dispatching on a linkage/input parameter (FUNC, MODE, PRS-MD, ACTION, etc.); create one entry per WHEN value; if no dispatch create one entry with condition "always"
-- entryPoints[].paragraphNames: list ALL paragraph names relevant to this entry point (for large-file second-pass use)
-- entryPoints[].steps: WHAT HAPPENS FOR THE BUSINESS, not code mechanics — "validates user credentials", not "performs VALIDATE-CREDS paragraph"; use numbered pseudocode if possible
+- parameters: use LINKAGE SECTION VARIABLES — field names, PIC types, and direction labels [in]/[out] are pre-analyzed; infer JS type: PIC X = string, PIC 9 = number, group level (no PIC) = object; direction null means infer from context
+- entryPoints: use ENTRY POINT DISPATCH as the starting point — each WHEN entry is one entry point; if ENTRY POINT DISPATCH is (none), look for EVALUATE or IF blocks dispatching on a linkage parameter; if no dispatch create one entry with condition "always"
+- entryPoints[].paragraphNames: list ALL paragraph names relevant to this entry point including PRE-DISPATCH PARAGRAPHS (for large-file second-pass use)
+- entryPoints[].steps: include PRE-DISPATCH PARAGRAPHS logic first (validation, access checks, initial setup) — these run before every mode; then mode-specific steps; describe WHAT HAPPENS FOR THE BUSINESS, not code mechanics
 - entryPoints[].sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
-- errorCatalog: use ERROR SEQUENCE NUMBERS FOUND IN CODE as the canonical list; include every code found; describe businessMeaning and systemAction from context
-- externalDependencies: only include CALLS that represent meaningful business operations; EXCLUDE infrastructure/utility calls whose names start with C_ (e.g. C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — these are middleware boilerplate not business logic
-- dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE) from context; return [] if none in either section
-- fileIO: file I/O from SELECT/ASSIGN and OPEN/READ/WRITE/CLOSE; return [] if none
+- errorCatalog: use ERROR ENTRIES as the canonical list — each entry has seqNo and dataElement pre-extracted; populate code=seqNo, add businessMeaning and systemAction from context; include every entry listed
+- externalDependencies: only CALLS representing meaningful business operations; EXCLUDE calls starting with C_ (C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — middleware boilerplate
+- dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE); if you see PREFIX2 operating on the same table as PREFIX in the paragraph text, that is a second buffer for the same table (not a different table) — the parser already deduplicates these; return [] if none
+- fileIO: file I/O from FILE I/O (SELECT statements) and OPEN/READ/WRITE/CLOSE in paragraphs; return [] if none
+
+Analysis discipline (from CAPI_RULES.md):
+- Paragraph names are labels, not contracts — do NOT infer behavior from the name alone (VALIDATE-ACCESS in one program checks branches, in another it reads entirely different tables); always base analysis on the actual code content of each paragraph provided
+- For each table read found in paragraphs, consider what happens after: are there conditional errors (not found = error?), fallback reads with different keys, or field derivation from the result?
+- The pre-dispatch paragraphs listed in PRE-DISPATCH PARAGRAPHS run before every mode — their validation and setup logic applies to ALL entry points
 `
 
 export const ANALYZE_ENTRY_POINT_PROMPT = (condition, businessName, context) => `
@@ -78,8 +83,10 @@ Return ONLY valid JSON matching this schema exactly:
 }
 
 Rules:
-- steps: WHAT HAPPENS FOR THE BUSINESS in this operation, not code mechanics
+- steps: start with PRE-DISPATCH PARAGRAPHS logic (validation, access, setup listed in context) — these run before this operation too; then describe the operation-specific WHAT HAPPENS FOR THE BUSINESS, not code mechanics
 - sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - returns: what output parameters or status values are set on success
-- errors: reference the ERROR SEQUENCE NUMBERS from context — use actual seq numbers (e.g. "2169: license expired") not generic descriptions
+- errors: reference ERROR ENTRIES from context — format as "seqNo (dataElement): business meaning"; use actual seq numbers from the list, not generic descriptions
+- Paragraph names are labels: do NOT infer behavior from name alone — base analysis on actual paragraph code provided
+- For table reads: describe what happens after (conditional errors, fallback reads, field derivation)
 `
