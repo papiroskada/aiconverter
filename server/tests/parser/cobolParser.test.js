@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars, extractErrorEntries } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -463,5 +463,64 @@ describe('extractLinkageVars', () => {
     const result = extractLinkageVars(src)
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('LP-A')
+  })
+})
+
+describe('extractErrorEntries', () => {
+  it('returns empty array when no error assignments', () => {
+    expect(extractErrorEntries('MOVE X TO Y.')).toEqual([])
+  })
+
+  it('extracts seqNo with dataElement on following line', () => {
+    const cobol = `
+      MOVE 1500 TO SCCGTERR-SEQ-NO.
+      MOVE "PRS-MD" TO SCCGTERR-DATA-EL.
+    `
+    const result = extractErrorEntries(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ seqNo: 1500, dataElement: 'PRS-MD' })
+  })
+
+  it('extracts seqNo with dataElement on preceding line', () => {
+    const cobol = `
+      MOVE "REF-PFX" TO WS-DATA-EL.
+      MOVE 1502 TO WS-SEQ-NO.
+    `
+    const result = extractErrorEntries(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ seqNo: 1502, dataElement: 'REF-PFX' })
+  })
+
+  it('returns null dataElement when no data element nearby', () => {
+    const cobol = `MOVE 9999 TO SCCGTERR-SEQ-NO.`
+    const result = extractErrorEntries(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ seqNo: 9999, dataElement: null })
+  })
+
+  it('deduplicates by seqNo (keeps first occurrence dataElement)', () => {
+    const cobol = `
+      MOVE "FIELD-A" TO SCCGTERR-DATA-EL.
+      MOVE 1500 TO SCCGTERR-SEQ-NO.
+      MOVE "FIELD-B" TO SCCGTERR-DATA-EL.
+      MOVE 1500 TO SCCGTERR-SEQ-NO.
+    `
+    const result = extractErrorEntries(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].seqNo).toBe(1500)
+  })
+
+  it('sorts by seqNo ascending', () => {
+    const cobol = `
+      MOVE 2000 TO WS-SEQ-NO.
+      MOVE 1000 TO WS-SEQ-NO.
+      MOVE 1500 TO WS-SEQ-NO.
+    `
+    const result = extractErrorEntries(cobol)
+    expect(result.map(e => e.seqNo)).toEqual([1000, 1500, 2000])
+  })
+
+  it('ignores 3-digit numbers', () => {
+    expect(extractErrorEntries('MOVE 999 TO WS-SEQ-NO.')).toEqual([])
   })
 })

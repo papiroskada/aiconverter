@@ -306,14 +306,39 @@ export function extractTuxTables(cobolText) {
   }))
 }
 
-export function extractErrorSeqNos(cobolText) {
-  const seqRe = /MOVE\s+(\d{4,5})\s+TO\s+\S*SEQ[-_]NO/gi
+export function extractErrorEntries(cobolText) {
+  const lines = cobolText.split('\n')
+  const fixedFormat = detectFixedFormat(lines)
+  const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l)
+
+  const seqRe  = /MOVE\s+(\d{4,5})\s+TO\s+\S*SEQ[-_]NO/i
+  const dataRe = /MOVE\s+"([^"]+)"\s+TO\s+\S*DATA[-_]EL/i
+
+  const entries = []
   const seen = new Set()
-  let m
-  while ((m = seqRe.exec(cobolText)) !== null) {
-    seen.add(parseInt(m[1], 10))
+
+  for (let i = 0; i < normalised.length; i++) {
+    const seqMatch = normalised[i].match(seqRe)
+    if (!seqMatch) continue
+    const seqNo = parseInt(seqMatch[1], 10)
+    if (seen.has(seqNo)) continue
+    seen.add(seqNo)
+
+    // Look ±3 lines for a DATA-EL assignment
+    let dataElement = null
+    for (let j = Math.max(0, i - 3); j <= Math.min(normalised.length - 1, i + 3); j++) {
+      const elMatch = normalised[j].match(dataRe)
+      if (elMatch) { dataElement = elMatch[1]; break }
+    }
+
+    entries.push({ seqNo, dataElement })
   }
-  return [...seen].sort((a, b) => a - b)
+
+  return entries.sort((a, b) => a.seqNo - b.seqNo)
+}
+
+export function extractErrorSeqNos(cobolText) {
+  return extractErrorEntries(cobolText).map(e => e.seqNo)
 }
 
 const KNOWN_CONSTRUCTS = [
