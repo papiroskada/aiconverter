@@ -500,14 +500,15 @@ describe('extractErrorEntries', () => {
 
   it('deduplicates by seqNo (keeps first occurrence dataElement)', () => {
     const cobol = `
+      MOVE 1500 TO SCCGTERR-SEQ-NO.
       MOVE "FIELD-A" TO SCCGTERR-DATA-EL.
       MOVE 1500 TO SCCGTERR-SEQ-NO.
       MOVE "FIELD-B" TO SCCGTERR-DATA-EL.
-      MOVE 1500 TO SCCGTERR-SEQ-NO.
     `
     const result = extractErrorEntries(cobol)
     expect(result).toHaveLength(1)
     expect(result[0].seqNo).toBe(1500)
+    expect(result[0].dataElement).toBe('FIELD-A')
   })
 
   it('sorts by seqNo ascending', () => {
@@ -522,5 +523,20 @@ describe('extractErrorEntries', () => {
 
   it('ignores 3-digit numbers', () => {
     expect(extractErrorEntries('MOVE 999 TO WS-SEQ-NO.')).toEqual([])
+  })
+
+  it('ignores 6-digit numbers', () => {
+    expect(extractErrorEntries('MOVE 100000 TO WS-SEQ-NO.')).toEqual([])
+  })
+
+  it('handles fixed-format COBOL with 6-char sequence number prefix', () => {
+    const cobol = [
+      '000100 MOVE "FX-FIELD" TO SCCGTERR-DATA-EL.',
+      '000200 MOVE 2500 TO SCCGTERR-SEQ-NO.',
+    ].join('\n')
+    const result = extractErrorEntries(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].seqNo).toBe(2500)
+    expect(result[0].dataElement).toBe('FX-FIELD')
   })
 })

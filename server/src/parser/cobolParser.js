@@ -324,9 +324,12 @@ export function extractErrorEntries(cobolText) {
     if (seen.has(seqNo)) continue
     seen.add(seqNo)
 
-    // Look ±3 lines for a DATA-EL assignment
+    // Look ±3 lines for a DATA-EL assignment, preferring closest match
     let dataElement = null
-    for (let j = Math.max(0, i - 3); j <= Math.min(normalised.length - 1, i + 3); j++) {
+    const distances = [0, 1, -1, 2, -2, 3, -3]
+    for (const d of distances) {
+      const j = i + d
+      if (j < 0 || j >= normalised.length) continue
       const elMatch = normalised[j].match(dataRe)
       if (elMatch) { dataElement = elMatch[1]; break }
     }
