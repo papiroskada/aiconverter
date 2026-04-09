@@ -427,41 +427,56 @@ export function extractLinkageVars(cobolText) {
 }
 
 export function extractEvaluateDispatch(cobolText) {
-  const lines = cobolText.split('\n')
-  const fixedFormat = detectFixedFormat(lines)
-  const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l)
+  try {
+    const lines = cobolText.split('\n')
+    const fixedFormat = detectFixedFormat(lines)
+    const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l)
 
-  const result = []
+    const result = []
 
-  for (let i = 0; i < normalised.length; i++) {
-    const evalMatch = normalised[i].match(/\bEVALUATE\s+(\S+)/i)
-    if (!evalMatch) continue
+    for (let i = 0; i < normalised.length; i++) {
+      const evalMatch = normalised[i].match(/\bEVALUATE\s+(\S+)/i)
+      if (!evalMatch) continue
 
-    const evaluateSubject = evalMatch[1].toUpperCase()
-    const entries = []
-    let j = i + 1
+      const evaluateSubject = evalMatch[1].replace(/\.$/, '').toUpperCase()
+      const entries = []
+      let j = i + 1
+      let depth = 1
 
-    while (j < normalised.length) {
-      const trimmed = normalised[j].trim()
-      if (/^END-EVALUATE/i.test(trimmed)) break
+      while (j < normalised.length) {
+        const trimmed = normalised[j].trim()
 
-      const whenMatch = trimmed.match(/^WHEN\s+(.+)/i)
-      if (whenMatch) {
-        const whenValue = whenMatch[1].trim().toUpperCase()
-        let performParagraph = null
-        for (let k = j + 1; k < Math.min(j + 6, normalised.length); k++) {
-          const kt = normalised[k].trim()
-          if (/^WHEN\b/i.test(kt) || /^END-EVALUATE/i.test(kt)) break
-          const perf = kt.match(/^PERFORM\s+([A-Z][A-Z0-9-]+)/i)
-          if (perf) { performParagraph = perf[1].toUpperCase(); break }
+        if (/^END-EVALUATE/i.test(trimmed)) {
+          depth--
+          if (depth === 0) break
+          j++; continue
         }
-        if (performParagraph) entries.push({ whenValue, performParagraph })
+        if (/\bEVALUATE\b/i.test(trimmed)) { depth++; j++; continue }
+
+        if (depth === 1) {
+          const whenMatch = trimmed.match(/^WHEN\s+(.+)/i)
+          if (whenMatch) {
+            const raw = whenMatch[1].trim()
+            const whenValue = raw.startsWith('"') ? raw : raw.toUpperCase()
+            let performParagraph = null
+            for (let k = j + 1; k < Math.min(j + 6, normalised.length); k++) {
+              const kt = normalised[k].trim()
+              if (/^WHEN\b/i.test(kt) || /^END-EVALUATE/i.test(kt)) break
+              const perf = kt.match(/^PERFORM\s+([A-Z][A-Z0-9-]+)/i)
+              if (perf) { performParagraph = perf[1].toUpperCase(); break }
+            }
+            if (performParagraph) entries.push({ whenValue, performParagraph })
+          }
+        }
+        j++
       }
-      j++
+
+      if (entries.length > 0) result.push({ evaluateSubject, entries })
+      i = j // skip lines already consumed by this EVALUATE block
     }
 
-    if (entries.length > 0) result.push({ evaluateSubject, entries })
+    return result
+  } catch {
+    return []
   }
-
-  return result
 }

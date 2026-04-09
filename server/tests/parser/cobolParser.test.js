@@ -617,4 +617,54 @@ describe('extractEvaluateDispatch', () => {
     expect(result).toHaveLength(1)
     expect(result[0].entries[0].performParagraph).toBe('MODE-ONE')
   })
+
+  it('nested EVALUATE does not corrupt outer block WHEN entries', () => {
+    const cobol = `
+      EVALUATE WS-OUTER
+        WHEN "A"
+          PERFORM DO-A
+        WHEN "B"
+          EVALUATE WS-INNER
+            WHEN "X"
+              PERFORM DO-X
+          END-EVALUATE
+        WHEN "C"
+          PERFORM DO-C
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].evaluateSubject).toBe('WS-OUTER')
+    const values = result[0].entries.map(e => e.whenValue)
+    expect(values).toContain('"A"')
+    expect(values).toContain('"C"')
+  })
+
+  it('strips trailing period from EVALUATE subject', () => {
+    const cobol = `
+      EVALUATE WS-FLAG.
+        WHEN "Y"
+          PERFORM DO-YES
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].evaluateSubject).toBe('WS-FLAG')
+  })
+
+  it('preserves case of quoted string literal in WHEN value', () => {
+    const cobol = `
+      EVALUATE WS-ACTION
+        WHEN "create"
+          PERFORM DO-CREATE
+        WHEN "delete"
+          PERFORM DO-DELETE
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(1)
+    const values = result[0].entries.map(e => e.whenValue)
+    expect(values).toContain('"create"')
+    expect(values).toContain('"delete"')
+  })
 })
