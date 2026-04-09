@@ -331,13 +331,19 @@ export function extractConstructs(cobolText) {
   })
 }
 
-export function extractWorkingStorage(cobolText) {
+// CAPI Rule 22g-ii: COBOL linkage fields follow {3-char}{R|U}{I|O}-FIELD naming.
+// RI/UI = input, RO/UO = output. Returns 'in', 'out', or null.
+function inferDirection(fieldName) {
+  const m = fieldName.match(/^[A-Z]{3}[RU](I|O)-/i)
+  if (!m) return null
+  return m[1].toUpperCase() === 'I' ? 'in' : 'out'
+}
+
+function extractSectionVars(cobolText, sectionHeader, stopPatterns, withDirection = false) {
   try {
     const lines = cobolText.split('\n')
     const fixedFormat = detectFixedFormat(lines)
-    const stopPatterns = ['PROCEDURE DIVISION', 'FILE SECTION', 'LINKAGE SECTION', 'SCREEN SECTION']
-
-    let inWS = false
+    let inSection = false
     const result = []
     let currentVar = null
 
@@ -345,14 +351,12 @@ export function extractWorkingStorage(cobolText) {
       const parsed = fixedFormat ? stripSequenceNumber(line) : line
       const upper = parsed.toUpperCase()
 
-      if (!inWS) {
-        if (upper.includes('WORKING-STORAGE SECTION')) inWS = true
+      if (!inSection) {
+        if (upper.includes(sectionHeader)) inSection = true
         continue
       }
-
       if (stopPatterns.some(p => upper.includes(p))) break
 
-      // 88-level condition
       const cond88 = parsed.match(/^\s*88\s+([A-Z0-9-]+)\s+VALUES?\s+(.+?)\.?\s*$/i)
       if (cond88 && currentVar) {
         currentVar.conditions.push({
@@ -362,14 +366,15 @@ export function extractWorkingStorage(cobolText) {
         continue
       }
 
-      // Variable definition (any level except 88)
       const varMatch = parsed.match(/^\s*(\d{1,2})\s+([A-Z0-9-]+)(?:\s+PIC\s+(\S+?)\.?)?/i)
       if (varMatch && parseInt(varMatch[1], 10) !== 88) {
+        const name = varMatch[2].toUpperCase()
         currentVar = {
           level: varMatch[1].padStart(2, '0'),
-          name: varMatch[2].toUpperCase(),
+          name,
           pic: varMatch[3] ? varMatch[3].replace(/\.$/, '') : null,
           conditions: [],
+          ...(withDirection ? { direction: inferDirection(name) } : {}),
         }
         result.push(currentVar)
       }
@@ -379,4 +384,16 @@ export function extractWorkingStorage(cobolText) {
   } catch {
     return []
   }
+}
+
+export function extractWorkingStorage(cobolText) {
+  return extractSectionVars(cobolText, 'WORKING-STORAGE SECTION', [
+    'PROCEDURE DIVISION', 'FILE SECTION', 'LINKAGE SECTION', 'SCREEN SECTION',
+  ])
+}
+
+export function extractLinkageVars(cobolText) {
+  return extractSectionVars(cobolText, 'LINKAGE SECTION', [
+    'PROCEDURE DIVISION', 'WORKING-STORAGE SECTION', 'FILE SECTION', 'SCREEN SECTION',
+  ], true)
 }

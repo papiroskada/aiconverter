@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -405,5 +405,63 @@ describe('extractErrorSeqNos', () => {
   it('ignores 3-digit numbers', () => {
     const cobol = `MOVE  999  TO  WS-SEQ-NO.`
     expect(extractErrorSeqNos(cobol)).toEqual([])
+  })
+})
+
+describe('extractLinkageVars', () => {
+  it('returns empty array when no LINKAGE SECTION', () => {
+    expect(extractLinkageVars('PROCEDURE DIVISION.\n PARA.\n   STOP RUN.')).toEqual([])
+  })
+
+  it('extracts 01-level parameter with PIC and direction in', () => {
+    const src = `DATA DIVISION.\nLINKAGE SECTION.\n 01 CPSRI-PART-ID PIC X(8).\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ level: '01', name: 'CPSRI-PART-ID', pic: 'X', conditions: [], direction: 'in' })
+  })
+
+  it('detects direction out from RO pattern', () => {
+    const src = `LINKAGE SECTION.\n 01 CPSRO-RTN-STS PIC 9(4).\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result[0].direction).toBe('out')
+  })
+
+  it('detects direction in from UI pattern (z-programs)', () => {
+    const src = `LINKAGE SECTION.\n 01 CHGUI-REF-PFX PIC X(2).\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result[0].direction).toBe('in')
+  })
+
+  it('detects direction out from UO pattern (z-programs)', () => {
+    const src = `LINKAGE SECTION.\n 01 CHGUO-RTN-STS PIC 9(4).\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result[0].direction).toBe('out')
+  })
+
+  it('returns direction null for fields not matching naming convention', () => {
+    const src = `LINKAGE SECTION.\n 01 LP-INPUT PIC X(8).\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result[0].direction).toBeNull()
+  })
+
+  it('extracts group with nested 05-level fields', () => {
+    const src = `LINKAGE SECTION.\n 01 LP-GROUP.\n    05 VLLRI-CODE PIC X(2).\n    05 VLLRO-STATUS PIC 9.\nPROCEDURE DIVISION.`
+    const result = extractLinkageVars(src)
+    expect(result.find(v => v.name === 'VLLRI-CODE').direction).toBe('in')
+    expect(result.find(v => v.name === 'VLLRO-STATUS').direction).toBe('out')
+  })
+
+  it('extracts 88-level conditions on linkage field', () => {
+    const src = `LINKAGE SECTION.\n 01 VLLRI-FUNC PIC X(2).\n    88 FUNC-READ   VALUE "RD".\n    88 FUNC-INSERT VALUE "INS".`
+    const result = extractLinkageVars(src)
+    expect(result[0].conditions).toHaveLength(2)
+    expect(result[0].conditions[0]).toEqual({ name: 'FUNC-READ', value: '"RD"' })
+  })
+
+  it('stops at WORKING-STORAGE SECTION', () => {
+    const src = `LINKAGE SECTION.\n 01 LP-A PIC X.\nWORKING-STORAGE SECTION.\n 01 WS-B PIC X.`
+    const result = extractLinkageVars(src)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('LP-A')
   })
 })
