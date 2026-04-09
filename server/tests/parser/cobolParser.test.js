@@ -417,7 +417,7 @@ describe('extractLinkageVars', () => {
     const src = `DATA DIVISION.\nLINKAGE SECTION.\n 01 CPSRI-PART-ID PIC X(8).\nPROCEDURE DIVISION.`
     const result = extractLinkageVars(src)
     expect(result).toHaveLength(1)
-    expect(result[0]).toEqual({ level: '01', name: 'CPSRI-PART-ID', pic: 'X', conditions: [], direction: 'in' })
+    expect(result[0]).toEqual({ level: '01', name: 'CPSRI-PART-ID', pic: 'X(8)', conditions: [], direction: 'in' })
   })
 
   it('detects direction out from RO pattern', () => {

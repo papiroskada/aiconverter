@@ -366,7 +366,7 @@ function extractSectionVars(cobolText, sectionHeader, stopPatterns, withDirectio
         continue
       }
 
-      const varMatch = parsed.match(/^\s*(\d{1,2})\s+([A-Z0-9-]+)(?:\s+PIC\s+(\S+?)\.?)?/i)
+      const varMatch = parsed.match(/^\s*(\d{1,2})\s+([A-Z0-9-]+)(?:\s+PIC\s+(\S+))?/i)
       if (varMatch && parseInt(varMatch[1], 10) !== 88) {
         const name = varMatch[2].toUpperCase()
         currentVar = {
