@@ -491,7 +491,8 @@ export function extractPerformGraph(paragraphChunks) {
 
   for (const chunk of paragraphChunks) {
     if (chunk.chunk_type === 'data_summary') continue
-    const name = chunk.chunk_name
+    const name = chunk.chunk_name.replace(/\s+\[\d+\]$/, '')
+    if (graph.has(name)) continue  // skip subsequent windows of the same paragraph
     const performed = new Set()
     const re = new RegExp(paraRe.source, paraRe.flags)
     let m

@@ -704,6 +704,22 @@ describe('extractPerformGraph', () => {
     expect(graph.has('WORKING-STORAGE')).toBe(false)
     expect(graph.has('REAL-PARA')).toBe(true)
   })
+
+  it('normalises windowed chunk names by stripping [N] suffix', () => {
+    const chunks = [
+      { chunk_name: 'MAIN-PARA', chunk_type: 'paragraph', cobol_text: 'MAIN-PARA.\n  PERFORM LOOP-PARA.' },
+      { chunk_name: 'LOOP-PARA [1]', chunk_type: 'paragraph', cobol_text: 'LOOP-PARA.\n  PERFORM INNER.' },
+      { chunk_name: 'LOOP-PARA [2]', chunk_type: 'paragraph', cobol_text: '  CONTINUE.' },
+      { chunk_name: 'INNER', chunk_type: 'paragraph', cobol_text: 'INNER.\n  MOVE 1 TO X.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    expect(graph.has('LOOP-PARA')).toBe(true)
+    expect(graph.has('LOOP-PARA [1]')).toBe(false)
+    expect(graph.has('LOOP-PARA [2]')).toBe(false)
+    // resolveTransitive from MAIN-PARA should reach LOOP-PARA and INNER
+    const reached = resolveTransitive('MAIN-PARA', graph)
+    expect(reached).toEqual(new Set(['MAIN-PARA', 'LOOP-PARA', 'INNER']))
+  })
 })
 
 describe('resolveTransitive', () => {
