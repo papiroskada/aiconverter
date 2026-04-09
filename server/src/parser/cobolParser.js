@@ -480,3 +480,43 @@ export function extractEvaluateDispatch(cobolText) {
     return []
   }
 }
+
+const PERFORM_KEYWORDS = new Set([
+  'UNTIL', 'VARYING', 'TIMES', 'WITH', 'THRU', 'THROUGH', 'TEST', 'AFTER', 'BEFORE',
+])
+
+export function extractPerformGraph(paragraphChunks) {
+  const graph = new Map()
+  const paraRe = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/gi
+
+  for (const chunk of paragraphChunks) {
+    if (chunk.chunk_type === 'data_summary') continue
+    const name = chunk.chunk_name
+    const performed = new Set()
+    const re = new RegExp(paraRe.source, paraRe.flags)
+    let m
+    while ((m = re.exec(chunk.cobol_text)) !== null) {
+      const target = m[1].toUpperCase()
+      if (!PERFORM_KEYWORDS.has(target)) performed.add(target)
+    }
+    graph.set(name, performed)
+  }
+
+  return graph
+}
+
+export function resolveTransitive(startParagraph, graph) {
+  const visited = new Set()
+  const queue = [startParagraph]
+
+  while (queue.length > 0) {
+    const curr = queue.shift()
+    if (visited.has(curr)) continue
+    visited.add(curr)
+    for (const child of (graph.get(curr) ?? [])) {
+      if (!visited.has(child)) queue.push(child)
+    }
+  }
+
+  return visited
+}

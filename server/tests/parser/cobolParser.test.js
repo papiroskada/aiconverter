@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars, extractErrorEntries, extractEvaluateDispatch } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars, extractErrorEntries, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -666,5 +666,81 @@ describe('extractEvaluateDispatch', () => {
     const values = result[0].entries.map(e => e.whenValue)
     expect(values).toContain('"create"')
     expect(values).toContain('"delete"')
+  })
+})
+
+describe('extractPerformGraph', () => {
+  it('returns empty Map for empty chunks array', () => {
+    const graph = extractPerformGraph([])
+    expect(graph.size).toBe(0)
+  })
+
+  it('maps paragraph to directly PERFORMed paragraphs', () => {
+    const chunks = [
+      { chunk_name: 'MAIN-PARA', chunk_type: 'paragraph', cobol_text: 'MAIN-PARA.\n  PERFORM VALIDATE.\n  PERFORM PROCESS.' },
+      { chunk_name: 'VALIDATE', chunk_type: 'paragraph', cobol_text: 'VALIDATE.\n  IF X > 0 MOVE 1 TO Y.' },
+      { chunk_name: 'PROCESS', chunk_type: 'paragraph', cobol_text: 'PROCESS.\n  PERFORM SAVE-DATA.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    expect(graph.get('MAIN-PARA')).toEqual(new Set(['VALIDATE', 'PROCESS']))
+    expect(graph.get('VALIDATE')).toEqual(new Set())
+    expect(graph.get('PROCESS')).toEqual(new Set(['SAVE-DATA']))
+  })
+
+  it('ignores PERFORM UNTIL / VARYING / TIMES keywords', () => {
+    const chunks = [
+      { chunk_name: 'LOOP-PARA', chunk_type: 'paragraph', cobol_text: 'LOOP-PARA.\n  PERFORM UNTIL WS-DONE = "Y"\n    MOVE 1 TO X\n  END-PERFORM.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    expect(graph.get('LOOP-PARA').has('UNTIL')).toBe(false)
+  })
+
+  it('ignores data_summary chunks', () => {
+    const chunks = [
+      { chunk_name: 'WORKING-STORAGE', chunk_type: 'data_summary', cobol_text: '01 WS-PERFORM PIC X.' },
+      { chunk_name: 'REAL-PARA', chunk_type: 'paragraph', cobol_text: 'REAL-PARA.\n  PERFORM OTHER-PARA.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    expect(graph.has('WORKING-STORAGE')).toBe(false)
+    expect(graph.has('REAL-PARA')).toBe(true)
+  })
+})
+
+describe('resolveTransitive', () => {
+  it('returns Set containing only start when start has no outgoing edges', () => {
+    const graph = new Map([['LEAF', new Set()]])
+    expect(resolveTransitive('LEAF', graph)).toEqual(new Set(['LEAF']))
+  })
+
+  it('resolves direct dependencies', () => {
+    const graph = new Map([
+      ['A', new Set(['B', 'C'])],
+      ['B', new Set()],
+      ['C', new Set()],
+    ])
+    expect(resolveTransitive('A', graph)).toEqual(new Set(['A', 'B', 'C']))
+  })
+
+  it('resolves transitive chain A→B→C→D', () => {
+    const graph = new Map([
+      ['A', new Set(['B'])],
+      ['B', new Set(['C'])],
+      ['C', new Set(['D'])],
+      ['D', new Set()],
+    ])
+    expect(resolveTransitive('A', graph)).toEqual(new Set(['A', 'B', 'C', 'D']))
+  })
+
+  it('handles cycles without infinite loop', () => {
+    const graph = new Map([
+      ['A', new Set(['B'])],
+      ['B', new Set(['A'])],
+    ])
+    expect(resolveTransitive('A', graph)).toEqual(new Set(['A', 'B']))
+  })
+
+  it('returns Set with only start when start not in graph', () => {
+    const graph = new Map([['OTHER', new Set()]])
+    expect(resolveTransitive('UNKNOWN', graph)).toEqual(new Set(['UNKNOWN']))
   })
 })
