@@ -425,3 +425,43 @@ export function extractLinkageVars(cobolText) {
     'PROCEDURE DIVISION', 'WORKING-STORAGE SECTION', 'FILE SECTION', 'SCREEN SECTION',
   ], true)
 }
+
+export function extractEvaluateDispatch(cobolText) {
+  const lines = cobolText.split('\n')
+  const fixedFormat = detectFixedFormat(lines)
+  const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l)
+
+  const result = []
+
+  for (let i = 0; i < normalised.length; i++) {
+    const evalMatch = normalised[i].match(/\bEVALUATE\s+(\S+)/i)
+    if (!evalMatch) continue
+
+    const evaluateSubject = evalMatch[1].toUpperCase()
+    const entries = []
+    let j = i + 1
+
+    while (j < normalised.length) {
+      const trimmed = normalised[j].trim()
+      if (/^END-EVALUATE/i.test(trimmed)) break
+
+      const whenMatch = trimmed.match(/^WHEN\s+(.+)/i)
+      if (whenMatch) {
+        const whenValue = whenMatch[1].trim().toUpperCase()
+        let performParagraph = null
+        for (let k = j + 1; k < Math.min(j + 6, normalised.length); k++) {
+          const kt = normalised[k].trim()
+          if (/^WHEN\b/i.test(kt) || /^END-EVALUATE/i.test(kt)) break
+          const perf = kt.match(/^PERFORM\s+([A-Z][A-Z0-9-]+)/i)
+          if (perf) { performParagraph = perf[1].toUpperCase(); break }
+        }
+        if (performParagraph) entries.push({ whenValue, performParagraph })
+      }
+      j++
+    }
+
+    if (entries.length > 0) result.push({ evaluateSubject, entries })
+  }
+
+  return result
+}

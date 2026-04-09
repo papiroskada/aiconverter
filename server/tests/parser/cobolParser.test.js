@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars, extractErrorEntries } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorSeqNos, extractLinkageVars, extractErrorEntries, extractEvaluateDispatch } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -538,5 +538,83 @@ describe('extractErrorEntries', () => {
     expect(result).toHaveLength(1)
     expect(result[0].seqNo).toBe(2500)
     expect(result[0].dataElement).toBe('FX-FIELD')
+  })
+})
+
+describe('extractEvaluateDispatch', () => {
+  it('returns empty array when no EVALUATE', () => {
+    expect(extractEvaluateDispatch('PROCEDURE DIVISION.\n PARA.\n   MOVE 1 TO X.')).toEqual([])
+  })
+
+  it('returns empty array when EVALUATE has no PERFORM entries', () => {
+    const cobol = `
+      EVALUATE WS-FLAG
+        WHEN "Y"
+          MOVE 1 TO WS-X
+        WHEN OTHER
+          MOVE 0 TO WS-X
+      END-EVALUATE
+    `
+    expect(extractEvaluateDispatch(cobol)).toEqual([])
+  })
+
+  it('extracts single EVALUATE with two WHEN-PERFORM entries', () => {
+    const cobol = `
+      EVALUATE VLLRI-PRS-MD
+        WHEN "1"
+          PERFORM PROCESS-CREATE
+        WHEN "2"
+          PERFORM PROCESS-READ
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].evaluateSubject).toBe('VLLRI-PRS-MD')
+    expect(result[0].entries).toHaveLength(2)
+    expect(result[0].entries[0]).toEqual({ whenValue: '"1"', performParagraph: 'PROCESS-CREATE' })
+    expect(result[0].entries[1]).toEqual({ whenValue: '"2"', performParagraph: 'PROCESS-READ' })
+  })
+
+  it('includes WHEN OTHER entries', () => {
+    const cobol = `
+      EVALUATE WS-MODE
+        WHEN "A"
+          PERFORM DO-A
+        WHEN OTHER
+          PERFORM DO-DEFAULT
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result[0].entries.find(e => e.whenValue === 'OTHER')).toBeDefined()
+    expect(result[0].entries.find(e => e.whenValue === 'OTHER').performParagraph).toBe('DO-DEFAULT')
+  })
+
+  it('extracts multiple separate EVALUATE blocks', () => {
+    const cobol = `
+      EVALUATE WS-FUNC
+        WHEN "RD"
+          PERFORM READ-RECORD
+      END-EVALUATE
+      EVALUATE WS-STATUS
+        WHEN "OK"
+          PERFORM FINISH-OK
+      END-EVALUATE
+    `
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(2)
+    expect(result[0].evaluateSubject).toBe('WS-FUNC')
+    expect(result[1].evaluateSubject).toBe('WS-STATUS')
+  })
+
+  it('handles fixed-format COBOL with sequence numbers', () => {
+    const cobol = [
+      '000010 EVALUATE WS-MODE',
+      '000020   WHEN "1"',
+      '000030     PERFORM MODE-ONE',
+      '000040 END-EVALUATE',
+    ].join('\n')
+    const result = extractEvaluateDispatch(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].entries[0].performParagraph).toBe('MODE-ONE')
   })
 })
