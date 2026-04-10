@@ -260,7 +260,6 @@ export default function Sidebar({
   stepProgress,
   batchAppId,
   onBatchCancel,
-  onUploaded,
   onBatchStarted,
   onDeleteApp,
 }) {
