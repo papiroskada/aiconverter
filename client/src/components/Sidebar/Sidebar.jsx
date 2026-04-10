@@ -5,6 +5,29 @@ import ConfirmationModal from '../Upload/ConfirmationModal.jsx'
 
 const STATUS_ORDER = { analyzing: 0, analyzed: 1, pending: 2, failed: 3 }
 
+function validateAndGroup(allFiles) {
+  const cobolFiles = allFiles.filter(f => f.name.match(/\.(cbl|cob)$/i))
+  const cFiles     = allFiles.filter(f => f.name.match(/\.c$/i))
+  const uFiles     = allFiles.filter(f => f.name.match(/\.u$/i))
+
+  const uStems = new Set(uFiles.map(f => f.name.replace(/\.u$/i, '')))
+  const cStems = new Set(cFiles.map(f => f.name.replace(/\.c$/i, '')))
+
+  const cWithoutU = cFiles.filter(f => !uStems.has(f.name.replace(/\.c$/i, '')))
+  const uWithoutC = uFiles.filter(f => !cStems.has(f.name.replace(/\.u$/i, '')))
+
+  if (cWithoutU.length > 0)
+    return { error: `Missing .u file for: ${cWithoutU.map(f => f.name).join(', ')}` }
+  if (uWithoutC.length > 0)
+    return { error: `Missing .c file for: ${uWithoutC.map(f => f.name).join(', ')}` }
+
+  const programFiles = [...cobolFiles, ...cFiles]
+  if (programFiles.length === 0)
+    return { error: 'No supported files found (.cbl, .cob, .c)' }
+
+  return { programFiles }
+}
+
 function statusIcon(status) {
   if (status === 'analyzing') return { icon: '▶', color: '#60a5fa' }
   if (status === 'analyzed')  return { icon: '✓', color: '#4ade80' }
@@ -266,6 +289,7 @@ export default function Sidebar({
   const [applications, setApplications] = useState([])
   const [folderFiles, setFolderFiles] = useState(null)
   const [defaultFolderName, setDefaultFolderName] = useState('')
+  const [uploadError, setUploadError] = useState(null)
   const fileRef = useRef(null)
   const folderRef = useRef(null)
 
@@ -287,28 +311,39 @@ export default function Sidebar({
     prevBatchAppId.current = batchAppId
   }, [batchAppId, loadApps])
 
-  async function handleSingleFile(e) {
-    const file = e.target.files[0]
-    if (!file) return
+  async function handleFilesSelect(e) {
+    const all = Array.from(e.target.files)
+    fileRef.current.value = ''
+    if (all.length === 0) return
+
+    const { programFiles, error } = validateAndGroup(all)
+    if (error) { setUploadError(error); return }
+
+    setUploadError(null)
     try {
-      await uploadFile(file, selectedAppId)
+      for (const file of programFiles) {
+        await uploadFile(file, selectedAppId)
+      }
       await startApplicationAnalysis(selectedAppId, 'sequential')
       onBatchStarted(selectedAppId)
       loadApps()
     } catch (err) {
-      console.error('Upload failed', err)
-    } finally {
-      fileRef.current.value = ''
+      setUploadError(err.message)
     }
   }
 
   function handleFolderSelect(e) {
-    const files = Array.from(e.target.files).filter(f => f.name.match(/\.(cbl|cob)$/i))
-    if (files.length === 0) return
-    const folderName = files[0].webkitRelativePath.split('/')[0] || 'Application'
-    setDefaultFolderName(folderName.toUpperCase())
-    setFolderFiles(files)
+    const all = Array.from(e.target.files)
     folderRef.current.value = ''
+    if (all.length === 0) return
+
+    const { programFiles, error } = validateAndGroup(all)
+    if (error) { setUploadError(error); return }
+
+    setUploadError(null)
+    const folderName = all[0].webkitRelativePath.split('/')[0] || 'Application'
+    setDefaultFolderName(folderName.toUpperCase())
+    setFolderFiles(programFiles)
   }
 
   async function handleCreateProject(name) {
@@ -325,8 +360,14 @@ export default function Sidebar({
 
   return (
     <div style={{ width: 200, background: '#1e293b', borderRight: '1px solid #334155', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-      <input ref={fileRef} type="file" accept=".cbl,.cob" style={{ display: 'none' }} onChange={handleSingleFile} />
-      <input ref={folderRef} type="file" webkitdirectory="" style={{ display: 'none' }} onChange={handleFolderSelect} />
+      <input ref={fileRef} type="file" multiple accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFilesSelect} />
+      <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFolderSelect} />
+      {uploadError && (
+        <div style={{ position: 'absolute', bottom: 48, left: 8, right: 8, background: '#450a0a', border: '1px solid #f87171', borderRadius: 6, padding: '8px 10px', fontSize: 11, color: '#fca5a5', zIndex: 20 }}
+          onClick={() => setUploadError(null)}>
+          {uploadError}
+        </div>
+      )}
 
       {selectedAppId === null || selectedApp === null ? (
         <ProjectsList

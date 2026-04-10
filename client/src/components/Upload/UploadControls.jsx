@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { uploadFile } from '../../api/programs.js'
 import ConfirmationModal from './ConfirmationModal.jsx'
 
 const btnBase = {
@@ -7,49 +6,59 @@ const btnBase = {
   padding: '10px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 
-export default function UploadControls({ onUploaded, onBatchStarted }) {
-  const fileRef = useRef(null)
+function validateAndGroup(allFiles) {
+  const cobolFiles = allFiles.filter(f => f.name.match(/\.(cbl|cob)$/i))
+  const cFiles     = allFiles.filter(f => f.name.match(/\.c$/i))
+  const uFiles     = allFiles.filter(f => f.name.match(/\.u$/i))
+
+  // Every .c must have a .u and vice versa
+  const uStems = new Set(uFiles.map(f => f.name.replace(/\.u$/i, '')))
+  const cStems = new Set(cFiles.map(f => f.name.replace(/\.c$/i, '')))
+
+  const cWithoutU = cFiles.filter(f => !uStems.has(f.name.replace(/\.c$/i, '')))
+  const uWithoutC = uFiles.filter(f => !cStems.has(f.name.replace(/\.u$/i, '')))
+
+  if (cWithoutU.length > 0)
+    return { error: `Missing .u file for: ${cWithoutU.map(f => f.name).join(', ')}` }
+  if (uWithoutC.length > 0)
+    return { error: `Missing .c file for: ${uWithoutC.map(f => f.name).join(', ')}` }
+
+  // Program files only (.u are companions, not programs)
+  const programFiles = [...cobolFiles, ...cFiles]
+  if (programFiles.length === 0)
+    return { error: 'No supported files found (.cbl, .cob, .c)' }
+
+  return { programFiles }
+}
+
+export default function UploadControls({ onBatchStarted }) {
+  const fileRef   = useRef(null)
   const folderRef = useRef(null)
-  const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError]             = useState(null)
   const [folderFiles, setFolderFiles] = useState(null)
   const [defaultName, setDefaultName] = useState('')
 
-  async function handleSingleFile(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    setUploading(true)
+  function handleFilesSelect(e) {
+    const all = Array.from(e.target.files)
+    fileRef.current.value = ''
+    if (all.length === 0) return
+
+    const { programFiles, error: err } = validateAndGroup(all)
+    if (err) { setError(err); return }
+
     setError(null)
-    try {
-      const program = await uploadFile(file)
-      onUploaded(program)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setUploading(false)
-      fileRef.current.value = ''
-    }
+    // No folder path available — user will type the app name
+    setDefaultName('')
+    setFolderFiles(programFiles)
   }
 
   function handleFolderSelect(e) {
     const all = Array.from(e.target.files)
     folderRef.current.value = ''
+    if (all.length === 0) return
 
-    const cobolFiles = all.filter(f => f.name.match(/\.(cbl|cob)$/i))
-    const cFiles     = all.filter(f => f.name.match(/\.c$/i))
-    const uFiles     = all.filter(f => f.name.match(/\.u$/i))
-
-    // Every .c must have a matching .u (same stem)
-    const uStems = new Set(uFiles.map(f => f.name.replace(/\.u$/i, '')))
-    const unpaired = cFiles.filter(f => !uStems.has(f.name.replace(/\.c$/i, '')))
-    if (unpaired.length > 0) {
-      setError(`Missing .u file for: ${unpaired.map(f => f.name).join(', ')}`)
-      return
-    }
-
-    // Program files only (no .u — they are companions, not programs)
-    const programFiles = [...cobolFiles, ...cFiles]
-    if (programFiles.length === 0) return
+    const { programFiles, error: err } = validateAndGroup(all)
+    if (err) { setError(err); return }
 
     setError(null)
     const folderName = all[0].webkitRelativePath.split('/')[0] || 'Application'
@@ -59,16 +68,29 @@ export default function UploadControls({ onUploaded, onBatchStarted }) {
 
   return (
     <div style={{ position: 'absolute', bottom: 24, right: 24, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-      <input ref={fileRef} type="file" accept=".cbl,.cob" style={{ display: 'none' }} onChange={handleSingleFile} />
-      <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFolderSelect} />
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        accept=".cbl,.cob,.c,.u"
+        style={{ display: 'none' }}
+        onChange={handleFilesSelect}
+      />
+      <input
+        ref={folderRef}
+        type="file"
+        webkitdirectory=""
+        accept=".cbl,.cob,.c,.u"
+        style={{ display: 'none' }}
+        onChange={handleFolderSelect}
+      />
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button
           onClick={() => fileRef.current.click()}
-          disabled={uploading}
-          style={{ ...btnBase, background: '#334155', opacity: uploading ? 0.7 : 1 }}
+          style={{ ...btnBase, background: '#334155' }}
         >
-          {uploading ? 'Uploading…' : '+ Upload File'}
+          + Upload Files
         </button>
         <button
           onClick={() => folderRef.current.click()}
