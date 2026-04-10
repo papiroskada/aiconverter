@@ -1,3 +1,30 @@
+const DIRECTION_BADGE = {
+  in:    { label: 'in',    color: '#4ade80' },
+  out:   { label: 'out',   color: '#f87171' },
+  inout: { label: 'inout', color: '#fbbf24' },
+}
+
+function ParamRow({ p }) {
+  const badge = DIRECTION_BADGE[p.direction]
+  return (
+    <div style={rowStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name}</span>
+          {badge && (
+            <span style={{ fontSize: 10, color: badge.color, border: `1px solid ${badge.color}`, borderRadius: 3, padding: '1px 5px', lineHeight: 1.4 }}>
+              {badge.label}
+            </span>
+          )}
+        </div>
+        <span style={{ color: '#475569', fontSize: 11 }}>{p.type}</span>
+      </div>
+      <div style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>{p.cobolName}</div>
+      {p.description && <p style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 0' }}>{p.description}</p>}
+    </div>
+  )
+}
+
 export default function OverviewTab({ analysis }) {
   if (!analysis) return <p style={{ color: '#64748b' }}>No analysis yet.</p>
 
@@ -16,32 +43,14 @@ export default function OverviewTab({ analysis }) {
       {inputParams.length > 0 && (
         <section>
           <label style={labelStyle}>Input Parameters</label>
-          {inputParams.map((p, i) => (
-            <div key={i} style={rowStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name}</span>
-                <span style={{ color: '#475569', fontSize: 11 }}>{p.type}</span>
-              </div>
-              <div style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>{p.cobolName}</div>
-              {p.description && <p style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 0' }}>{p.description}</p>}
-            </div>
-          ))}
+          {inputParams.map((p, i) => <ParamRow key={i} p={p} />)}
         </section>
       )}
 
       {outputParams.length > 0 && (
         <section>
           <label style={labelStyle}>Output Parameters</label>
-          {outputParams.map((p, i) => (
-            <div key={i} style={rowStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name}</span>
-                <span style={{ color: '#475569', fontSize: 11 }}>{p.type}</span>
-              </div>
-              <div style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>{p.cobolName}</div>
-              {p.description && <p style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 0' }}>{p.description}</p>}
-            </div>
-          ))}
+          {outputParams.map((p, i) => <ParamRow key={i} p={p} />)}
         </section>
       )}
     </div>

@@ -123,7 +123,7 @@ function mapResult(spec) {
   return {
     business_purpose: spec.businessPurpose ?? '',
     input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
-    output_contract:  JSON.stringify(params.filter(p => p.direction !== 'in')),
+    output_contract:  JSON.stringify(params.filter(p => p.direction === 'out' || p.direction === 'inout')),
     entry_points:          (spec.entryPoints ?? []).map(({ paragraphNames: _, ...ep }) => ep),
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
