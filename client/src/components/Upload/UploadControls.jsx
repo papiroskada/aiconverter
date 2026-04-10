@@ -32,21 +32,35 @@ export default function UploadControls({ onUploaded, onBatchStarted }) {
   }
 
   function handleFolderSelect(e) {
-    const files = Array.from(e.target.files).filter(f =>
-      f.name.match(/\.(cbl|cob)$/i)
-    )
-    if (files.length === 0) return
-    // Derive folder name from webkitRelativePath
-    const folderName = files[0].webkitRelativePath.split('/')[0] || 'Application'
-    setDefaultName(folderName.toUpperCase())
-    setFolderFiles(files)
+    const all = Array.from(e.target.files)
     folderRef.current.value = ''
+
+    const cobolFiles = all.filter(f => f.name.match(/\.(cbl|cob)$/i))
+    const cFiles     = all.filter(f => f.name.match(/\.c$/i))
+    const uFiles     = all.filter(f => f.name.match(/\.u$/i))
+
+    // Every .c must have a matching .u (same stem)
+    const uStems = new Set(uFiles.map(f => f.name.replace(/\.u$/i, '')))
+    const unpaired = cFiles.filter(f => !uStems.has(f.name.replace(/\.c$/i, '')))
+    if (unpaired.length > 0) {
+      setError(`Missing .u file for: ${unpaired.map(f => f.name).join(', ')}`)
+      return
+    }
+
+    // Program files only (no .u — they are companions, not programs)
+    const programFiles = [...cobolFiles, ...cFiles]
+    if (programFiles.length === 0) return
+
+    setError(null)
+    const folderName = all[0].webkitRelativePath.split('/')[0] || 'Application'
+    setDefaultName(folderName.toUpperCase())
+    setFolderFiles(programFiles)
   }
 
   return (
     <div style={{ position: 'absolute', bottom: 24, right: 24, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
       <input ref={fileRef} type="file" accept=".cbl,.cob" style={{ display: 'none' }} onChange={handleSingleFile} />
-      <input ref={folderRef} type="file" webkitdirectory="" style={{ display: 'none' }} onChange={handleFolderSelect} />
+      <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFolderSelect} />
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button
