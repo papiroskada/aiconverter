@@ -118,17 +118,19 @@ function buildEntryPointContext(structural, paragraphChunks, paragraphNames, per
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
 
-function mapResult(spec) {
+function mapResult(spec, preDispatch = [], twoStep = false) {
   const params = spec.parameters ?? []
   return {
     business_purpose: spec.businessPurpose ?? '',
     input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
-    output_contract:  JSON.stringify(params.filter(p => p.direction === 'out' || p.direction === 'inout')),
-    entry_points:          (spec.entryPoints ?? []).map(({ paragraphNames: _, ...ep }) => ep),
+    output_contract:  JSON.stringify(params.filter(p => p.direction !== 'in')),
+    entry_points:          spec.entryPoints ?? [],
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
     db_tables: spec.dbTables ?? [],
     file_ops:  (spec.fileIO ?? []).map(f => ({ file: f.file, operations: f.operations })),
+    pre_dispatch:      preDispatch,
+    analysis_two_step: twoStep,
   }
 }
 
@@ -160,50 +162,52 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   if (estimateTokens(fullContext) <= TOKEN_LIMIT) {
     // ── Small file: one call with full paragraph code ──────────────────────
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
-  } else {
-    // ── Large file: two-step ───────────────────────────────────────────────
-    const snippetLines = estimateTokens(buildContext(structural, paragraphChunks, 5)) > MODEL_LIMIT ? 3 : 5
-    const snippetContext = buildContext(structural, paragraphChunks, snippetLines)
+    logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
+    emit('progress', { stage: 'step', step: 2, total: 2 })
+    return mapResult(spec, preDispatchNames, false)
+  }
 
+  // ── Large file: two-step ───────────────────────────────────────────────
+  const snippetLines = estimateTokens(buildContext(structural, paragraphChunks, 5)) > MODEL_LIMIT ? 3 : 5
+  const snippetContext = buildContext(structural, paragraphChunks, snippetLines)
+
+  logAndEmit(emit, programName, 'start', {
+    stage: 'analysis',
+    message: `Large file — step 1: identifying entry points (${snippetLines}-line snippets)`,
+  })
+
+  spec = await provider.extractBusinessAnalysis(snippetContext, signal)
+
+  const entryPoints = spec.entryPoints ?? []
+  if (entryPoints.length > 0) {
     logAndEmit(emit, programName, 'start', {
       stage: 'analysis',
-      message: `Large file — step 1: identifying entry points (${snippetLines}-line snippets)`,
+      message: `Step 2: analysing ${entryPoints.length} entry point(s) in detail`,
     })
 
-    spec = await provider.extractBusinessAnalysis(snippetContext, signal)
+    emit('progress', { stage: 'step', step: 2, total: 2 })
 
-    const entryPoints = spec.entryPoints ?? []
-    if (entryPoints.length > 0) {
-      logAndEmit(emit, programName, 'start', {
-        stage: 'analysis',
-        message: `Step 2: analysing ${entryPoints.length} entry point(s) in detail`,
+    // parallel detail analysis per entry point
+    const detailed = await Promise.all(
+      entryPoints.map(async (ep) => {
+        if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+        const names = ep.paragraphNames ?? []
+        if (names.length === 0) return ep
+        try {
+          const epContext = buildEntryPointContext(structural, paragraphChunks, names, performGraph, preDispatchNames)
+          const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal)
+          return { ...ep, ...detail }
+        } catch (err) {
+          if (err.name === 'AbortError') throw err
+          logger.error(programName, `Entry point detail failed for "${ep.businessName}": ${err.message}`)
+          return ep
+        }
       })
-
-      emit('progress', { stage: 'step', step: 2, total: 2 })
-
-      // parallel detail analysis per entry point
-      const detailed = await Promise.all(
-        entryPoints.map(async (ep) => {
-          if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
-          const names = ep.paragraphNames ?? []
-          if (names.length === 0) return ep
-          try {
-            const epContext = buildEntryPointContext(structural, paragraphChunks, names, performGraph, preDispatchNames)
-            const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal)
-            return { ...ep, ...detail, paragraphNames: undefined }
-          } catch (err) {
-            if (err.name === 'AbortError') throw err
-            logger.error(programName, `Entry point detail failed for "${ep.businessName}": ${err.message}`)
-            return { ...ep, paragraphNames: undefined }
-          }
-        })
-      )
-      spec = { ...spec, entryPoints: detailed }
-    }
+    )
+    spec = { ...spec, entryPoints: detailed }
   }
 
   logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-
-  return mapResult(spec)
+  return mapResult(spec, preDispatchNames, true)
 }
