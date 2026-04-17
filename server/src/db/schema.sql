@@ -110,3 +110,9 @@ ALTER TYPE chunk_type ADD VALUE IF NOT EXISTS 'entry_point';
 ALTER TABLE programs
   ADD COLUMN IF NOT EXISTS file_type         TEXT NOT NULL DEFAULT 'cobol',
   ADD COLUMN IF NOT EXISTS companion_content TEXT;
+
+-- Analysis data enrichment: pre-dispatch list, model metadata, two-step flag
+ALTER TABLE program_analysis
+  ADD COLUMN IF NOT EXISTS pre_dispatch       JSONB   NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS analysis_model     TEXT,
+  ADD COLUMN IF NOT EXISTS analysis_two_step  BOOLEAN;
