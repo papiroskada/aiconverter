@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT } from '../prompts.js'
 
 export class ClaudeProvider extends BaseProvider {
   constructor(config = {}) {
@@ -21,11 +21,15 @@ export class ClaudeProvider extends BaseProvider {
     return JSON.parse(cleaned)
   }
 
-  async extractBusinessAnalysis(context, signal) {
-    return this.#callClaude(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
+  async extractBusinessAnalysis(context, signal, lang = 'cobol') {
+    const prompt = lang === 'c' ? C_BUSINESS_ANALYSIS_PROMPT(context) : BUSINESS_ANALYSIS_PROMPT(context)
+    return this.#callClaude(prompt, 8000, this.modelMain, signal)
   }
 
-  async analyzeEntryPoint(condition, businessName, context, signal) {
-    return this.#callClaude(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
+  async analyzeEntryPoint(condition, businessName, context, signal, lang = 'cobol') {
+    const prompt = lang === 'c'
+      ? C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
+      : ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
+    return this.#callClaude(prompt, 4096, this.modelDetail, signal)
   }
 }

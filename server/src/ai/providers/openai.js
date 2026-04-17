@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT } from '../prompts.js'
 
 export class OpenAIProvider extends BaseProvider {
   constructor(config = {}) {
@@ -19,11 +19,15 @@ export class OpenAIProvider extends BaseProvider {
     return JSON.parse(completion.choices[0].message.content)
   }
 
-  async extractBusinessAnalysis(context, signal) {
-    return this.#callOpenAI(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
+  async extractBusinessAnalysis(context, signal, lang = 'cobol') {
+    const prompt = lang === 'c' ? C_BUSINESS_ANALYSIS_PROMPT(context) : BUSINESS_ANALYSIS_PROMPT(context)
+    return this.#callOpenAI(prompt, 8000, this.modelMain, signal)
   }
 
-  async analyzeEntryPoint(condition, businessName, context, signal) {
-    return this.#callOpenAI(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
+  async analyzeEntryPoint(condition, businessName, context, signal, lang = 'cobol') {
+    const prompt = lang === 'c'
+      ? C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
+      : ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
+    return this.#callOpenAI(prompt, 4096, this.modelDetail, signal)
   }
 }
