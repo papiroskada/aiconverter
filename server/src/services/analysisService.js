@@ -52,7 +52,10 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
       result = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
     }
 
-    await upsertBusinessAnalysis(programId, result)
+    const analysisModel = settings.ai_provider === 'openai'
+      ? (settings.openai_model_interface ?? 'gpt-4o')
+      : (settings.claude_model_interface ?? 'claude-sonnet-4-6')
+    await upsertBusinessAnalysis(programId, { ...result, analysis_model: analysisModel })
     await updateGraphAfterAnalysis(programId, (result.external_dependencies ?? []).map(d => ({ program: d.program, using: '' })))
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
     emit('done', { programId })
