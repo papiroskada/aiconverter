@@ -42,7 +42,13 @@ Return ONLY valid JSON matching this schema exactly:
     }
   ],
   "dbTables": [
-    { "table": "TABLE-NAME", "operation": "SELECT|INSERT|UPDATE|DELETE", "fields": ["FIELD-NAME"] }
+    {
+      "table": "TABLE-NAME",
+      "operation": "SELECT|INSERT|UPDATE|DELETE",
+      "fields": ["FIELD-NAME"],
+      "keyFields": ["KEY-FIELD-USED-IN-WHERE-OR-INDEX"],
+      "notFoundAction": "error 1500 | fallback read with key X | return empty | n/a"
+    }
   ],
   "fileIO": [
     { "file": "FILE-NAME", "operations": ["OPEN", "READ", "WRITE", "CLOSE"] }
@@ -58,7 +64,7 @@ Rules:
 - entryPoints[].sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - errorCatalog: use ERROR ENTRIES as the canonical list — each entry has seqNo and dataElement pre-extracted; populate code=seqNo, add businessMeaning and systemAction from context; include every entry listed
 - externalDependencies: only CALLS representing meaningful business operations; EXCLUDE calls starting with C_ (C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — middleware boilerplate
-- dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE); if you see PREFIX2 operating on the same table as PREFIX in the paragraph text, that is a second buffer for the same table (not a different table) — the parser already deduplicates these; return [] if none
+- dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE); if you see PREFIX2 operating on the same table as PREFIX in the paragraph text, that is a second buffer for the same table (not a different table) — the parser already deduplicates these; for each table also capture: keyFields = fields used in the WHERE clause or key lookup (e.g. primary key field); notFoundAction = what happens if the row does not exist (error code, fallback read with a different key, or "return empty"); if no key info is available use []; if write-only (INSERT/UPDATE/DELETE) set notFoundAction to "n/a"; return [] if none
 - fileIO: file I/O from FILE I/O (SELECT statements) and OPEN/READ/WRITE/CLOSE in paragraphs; return [] if none
 
 Analysis discipline (from CAPI_RULES.md):
@@ -135,7 +141,13 @@ Return ONLY valid JSON matching this schema exactly:
     }
   ],
   "dbTables": [
-    { "table": "table-name", "operation": "SGE|RDN|UPD|DEL|INL", "fields": ["field-name"] }
+    {
+      "table": "table-name",
+      "operation": "SGE|RDN|UPD|DEL|INL",
+      "fields": ["field-name"],
+      "keyFields": ["key-field-used-in-lookup"],
+      "notFoundAction": "error code | fallback read | return empty | n/a"
+    }
   ],
   "fileIO": []
 }
@@ -148,7 +160,7 @@ Rules:
 - entryPoints[].steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init — listed in context), then mode-specific steps; describe WHAT HAPPENS FOR THE BUSINESS
 - errorCatalog: use ERROR CALLS — each entry has code and field pre-extracted; add businessMeaning and systemAction from code context
 - externalDependencies: use SERVICE CALLS — only meaningful business calls; exclude c_xxx utility calls (c_writelnkarea, c_fmtShrtDate, c_getdatetm etc.)
-- dbTables: use DATABASE CALLS (svcCallPlnsqlio) — table and operations pre-extracted
+- dbTables: use DATABASE CALLS (svcCallPlnsqlio) — table and operations pre-extracted; for each call also capture: keyFields = fields passed as lookup key; notFoundAction = what happens if no row found (error code, fallback call, or "return empty"); INL/UPD/DEL → notFoundAction "n/a"
 - fileIO: always []
 
 Analysis discipline:
