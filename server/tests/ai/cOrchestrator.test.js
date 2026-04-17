@@ -140,6 +140,31 @@ describe('runCAnalysis', () => {
     expect(provider.extractBusinessAnalysis.mock.calls[0][2]).toBe('c')
   })
 
+  it('returns analysis_two_step: false for small file', async () => {
+    const provider = makeProvider()
+    const result = await runCAnalysis({ cText: MINIMAL_C, uText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(result.analysis_two_step).toBe(false)
+  })
+
+  it('returns pre_dispatch as array', async () => {
+    const provider = makeProvider()
+    const result = await runCAnalysis({ cText: MINIMAL_C, uText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(Array.isArray(result.pre_dispatch)).toBe(true)
+  })
+
+  it('keeps paragraphNames in entry_points', async () => {
+    const provider = makeProvider({
+      extractBusinessAnalysis: vi.fn().mockResolvedValue({
+        businessPurpose: 'Test',
+        parameters: [],
+        entryPoints: [{ condition: 'always', businessName: 'Run', paragraphNames: ['pvtFoo'], steps: [], sideEffects: [], returns: '', errors: [] }],
+        errorCatalog: [], externalDependencies: [], dbTables: [], fileIO: [],
+      }),
+    })
+    const result = await runCAnalysis({ cText: MINIMAL_C, uText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(Array.isArray(result.entry_points[0].paragraphNames)).toBe(true)
+  })
+
   it('two-step for large file: calls extractBusinessAnalysis once and analyzeEntryPoint per entry point', async () => {
     const hugeChunks = Array.from({ length: 5 }, (_, i) => ({
       chunk_name: `pvtFunc${i}`,

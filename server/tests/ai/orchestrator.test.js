@@ -130,6 +130,18 @@ describe('runAnalysis — small file', () => {
     const stages = events.map(ev => ev.d?.stage)
     expect(stages).toContain('analysis')
   })
+
+  it('returns analysis_two_step: false for small file', async () => {
+    const provider = makeProvider()
+    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(result.analysis_two_step).toBe(false)
+  })
+
+  it('returns pre_dispatch as array', async () => {
+    const provider = makeProvider()
+    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(Array.isArray(result.pre_dispatch)).toBe(true)
+  })
 })
 
 describe('runAnalysis — large file two-step', () => {
@@ -163,10 +175,16 @@ describe('runAnalysis — large file two-step', () => {
     expect(result.entry_points[0].sideEffects).toEqual(['updates counter'])
   })
 
-  it('strips paragraphNames from final entry_points', async () => {
+  it('keeps paragraphNames in final entry_points', async () => {
     const provider = makeProvider()
     const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
-    expect(result.entry_points[0].paragraphNames).toBeUndefined()
+    expect(Array.isArray(result.entry_points[0].paragraphNames)).toBe(true)
+  })
+
+  it('returns analysis_two_step: true for large file', async () => {
+    const provider = makeProvider()
+    const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
+    expect(result.analysis_two_step).toBe(true)
   })
 })
 
