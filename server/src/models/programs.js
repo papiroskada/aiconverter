@@ -1,11 +1,11 @@
 import pool from '../db/client.js'
 
-export async function createProgram({ name, file_path = null, status = 'pending', application_id = null }) {
+export async function createProgram({ name, file_path = null, status = 'pending', application_id = null, file_type = 'cobol', companion_content = null }) {
   const { rows } = await pool.query(
-    `INSERT INTO programs (name, file_path, status, application_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO programs (name, file_path, status, application_id, file_type, companion_content)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [name, file_path, status, application_id]
+    [name, file_path, status, application_id, file_type, companion_content]
   )
   return rows[0]
 }
@@ -60,7 +60,7 @@ export async function deleteProgramsByApplicationId(applicationId) {
 }
 
 export async function getAllPrograms() {
-  const { rows } = await pool.query('SELECT id, name, status, application_id FROM programs ORDER BY created_at ASC')
+  const { rows } = await pool.query('SELECT id, name, status, application_id, file_type FROM programs ORDER BY created_at ASC')
   return rows
 }
 

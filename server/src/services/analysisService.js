@@ -6,6 +6,7 @@ import { getProvider } from '../ai/providers/base.js'
 import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
+import pool from '../db/client.js'
 import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms } from '../models/programs.js'
 import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
@@ -32,7 +33,25 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
   activeControllers.set(programId, controller)
   const provider = await getProvider(settings)
   try {
-    const result = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
+    const program = await findProgramById(programId)
+    const fileType = program?.file_type ?? 'cobol'
+
+    let result
+    if (fileType === 'c') {
+      const { runCAnalysis } = await import('../ai/cOrchestrator.js')
+      result = await runCAnalysis({
+        cText: cobolText,
+        uText: program?.companion_content ?? '',
+        chunks: savedChunks,
+        provider,
+        emit,
+        programName,
+        signal: controller.signal,
+      })
+    } else {
+      result = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
+    }
+
     await upsertBusinessAnalysis(programId, result)
     await updateGraphAfterAnalysis(programId, (result.external_dependencies ?? []).map(d => ({ program: d.program, using: '' })))
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
@@ -63,15 +82,25 @@ export function cancelProgram(programId) {
 
 // Single-file upload: saves file, parses, and fire-and-forgets analysis (no applicationId)
 // Batch upload: saves file and parses only — batchService handles analysis (with applicationId)
-export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = null) {
+export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = null, companion = null) {
   mkdirSync(UPLOADS_DIR, { recursive: true })
 
-  const cobolText = preprocessCobol(file.buffer.toString('utf8'))
-  const programName = file.originalname.replace(/\.cbl$/i, '').toUpperCase()
+  const ext = file.originalname.split('.').pop().toLowerCase()
+  const fileType = ext === 'c' ? 'c' : 'cobol'
+  const sourceText = file.buffer.toString('utf8')
+  const cobolText = fileType === 'cobol' ? preprocessCobol(sourceText) : sourceText
+  const programName = file.originalname.replace(/\.(cbl|cob|c)$/i, '').toUpperCase()
+  const companionContent = companion ? companion.buffer.toString('utf8') : null
 
   let program = await findProgramByName(programName)
   if (!program) {
-    program = await createProgram({ name: programName, status: 'analyzing', application_id: applicationId })
+    program = await createProgram({
+      name: programName,
+      status: 'analyzing',
+      application_id: applicationId,
+      file_type: fileType,
+      companion_content: companionContent,
+    })
   } else {
     // Single-file uploads: reject if already analyzing (SSE subscriber is watching it)
     // Batch uploads (applicationId set): force-reset even if stuck from a previous run
@@ -82,9 +111,16 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
     if (applicationId) {
       await updateProgramApplicationId(program.id, applicationId)
     }
+    if (companionContent !== null) {
+      await pool.query(
+        'UPDATE programs SET companion_content = $1, file_type = $2, updated_at = NOW() WHERE id = $3',
+        [companionContent, fileType, program.id]
+      )
+    }
   }
 
-  const filePath = join(UPLOADS_DIR, `${program.id}.cbl`)
+  const fileExt = fileType === 'c' ? 'c' : 'cbl'
+  const filePath = join(UPLOADS_DIR, `${program.id}.${fileExt}`)
   writeFileSync(filePath, cobolText)
   await updateFilePath(program.id, filePath)
 
@@ -93,9 +129,16 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
   const emit = makeEmit(program.id, sseEmitters)
 
   const t0 = Date.now()
-  logger.start(programName, 'Parsing COBOL file...')
-  emit('progress', { stage: 'parsing', message: 'Parsing COBOL file...' })
-  const parsedChunks = parseCobol(cobolText)
+  const parserLabel = fileType === 'c' ? 'C file' : 'COBOL file'
+  logger.start(programName, `Parsing ${parserLabel}...`)
+  emit('progress', { stage: 'parsing', message: `Parsing ${parserLabel}...` })
+  let parsedChunks
+  if (fileType === 'c') {
+    const { parseCProgram } = await import('../parser/cParser.js')
+    parsedChunks = parseCProgram(cobolText)
+  } else {
+    parsedChunks = parseCobol(cobolText)
+  }
   const savedChunks = await insertChunks(program.id, parsedChunks)
   const parseDuration = Date.now() - t0
   logger.done(programName, `Parsed ${savedChunks.length} chunks`, parseDuration)
@@ -116,7 +159,8 @@ export async function runProgramFromFile(programId, programSseEmitters, settings
   if (!program || !program.file_path) return
 
   await updateProgramStatus(programId, 'analyzing')
-  const cobolText = preprocessCobol(readFileSync(program.file_path, 'utf8'))
+  const rawText = readFileSync(program.file_path, 'utf8')
+  const cobolText = (program.file_type ?? 'cobol') === 'cobol' ? preprocessCobol(rawText) : rawText
   const savedChunks = await getChunksByProgramId(programId)
 
   const programEmit = makeEmit(programId, programSseEmitters)
@@ -140,7 +184,8 @@ export async function reanalyze(programId, sseEmitters) {
 
   if (!program.file_path) throw Object.assign(new Error('No source file found'), { status: 404 })
   await updateProgramStatus(programId, 'analyzing')
-  const cobolText = preprocessCobol(readFileSync(program.file_path, 'utf8'))
+  const rawText = readFileSync(program.file_path, 'utf8')
+  const cobolText = (program.file_type ?? 'cobol') === 'cobol' ? preprocessCobol(rawText) : rawText
   const existingChunks = await getChunksByProgramId(programId)
   const settings = await getSettings()
   const emit = makeEmit(programId, sseEmitters)

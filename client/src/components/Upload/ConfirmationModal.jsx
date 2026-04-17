@@ -15,7 +15,7 @@ const selectStyle = { ...inputStyle, cursor: 'pointer' }
 const labelStyle = { color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }
 const sectionStyle = { display: 'flex', flexDirection: 'column', gap: 12 }
 
-export default function ConfirmationModal({ files, defaultName, onClose, onStarted }) {
+export default function ConfirmationModal({ files, companionMap = new Map(), defaultName, onClose, onStarted }) {
   const [appName, setAppName] = useState(defaultName)
   const [provider, setProvider] = useState('claude')
   const [modelInterface, setModelInterface] = useState('claude-sonnet-4-6')
@@ -63,7 +63,9 @@ export default function ConfirmationModal({ files, defaultName, onClose, onStart
 
       for (const file of files) {
         setUploadStatus(`Uploading ${file.name}…`)
-        await uploadFile(file, app.id)
+        const stem = file.name.replace(/\.(cbl|cob|c)$/i, '')
+        const companion = companionMap.get(stem) ?? null
+        await uploadFile(file, app.id, companion)
         setProgress(prev => ({ ...prev, [file.name]: 'uploaded' }))
       }
       setUploadStatus('')

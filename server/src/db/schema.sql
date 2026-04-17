@@ -102,3 +102,11 @@ ALTER TABLE program_chunks
 ALTER TABLE settings
   DROP COLUMN IF EXISTS claude_model_diagram,
   DROP COLUMN IF EXISTS openai_model_diagram;
+
+-- C parser support: new chunk types and program metadata
+ALTER TYPE chunk_type ADD VALUE IF NOT EXISTS 'function';
+ALTER TYPE chunk_type ADD VALUE IF NOT EXISTS 'entry_point';
+
+ALTER TABLE programs
+  ADD COLUMN IF NOT EXISTS file_type         TEXT NOT NULL DEFAULT 'cobol',
+  ADD COLUMN IF NOT EXISTS companion_content TEXT;

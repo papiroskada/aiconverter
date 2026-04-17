@@ -9,6 +9,7 @@ function validateAndGroup(allFiles) {
   const cobolFiles = allFiles.filter(f => f.name.match(/\.(cbl|cob)$/i))
   const cFiles     = allFiles.filter(f => f.name.match(/\.c$/i))
   const uFiles     = allFiles.filter(f => f.name.match(/\.u$/i))
+  const sFiles     = allFiles.filter(f => f.name.match(/\.s$/i))
 
   const uStems = new Set(uFiles.map(f => f.name.replace(/\.u$/i, '')))
   const cStems = new Set(cFiles.map(f => f.name.replace(/\.c$/i, '')))
@@ -25,7 +26,15 @@ function validateAndGroup(allFiles) {
   if (programFiles.length === 0)
     return { error: 'No supported files found (.cbl, .cob, .c)' }
 
-  return { programFiles }
+  // Build companion maps: stem → file
+  const companionMap = new Map()
+  for (const f of uFiles) companionMap.set(f.name.replace(/\.u$/i, ''), f)
+  for (const f of sFiles) {
+    const stem = f.name.replace(/\.s$/i, '')
+    if (!companionMap.has(stem)) companionMap.set(stem, f)
+  }
+
+  return { programFiles, companionMap }
 }
 
 function statusIcon(status) {
@@ -288,6 +297,8 @@ export default function Sidebar({
 }) {
   const [applications, setApplications] = useState([])
   const [folderFiles, setFolderFiles] = useState(null)
+  const [allFiles, setAllFiles] = useState([])
+  const [companionMap, setCompanionMap] = useState(new Map())
   const [defaultFolderName, setDefaultFolderName] = useState('')
   const [uploadError, setUploadError] = useState(null)
   const fileRef = useRef(null)
@@ -316,13 +327,15 @@ export default function Sidebar({
     fileRef.current.value = ''
     if (all.length === 0) return
 
-    const { programFiles, error } = validateAndGroup(all)
+    const { programFiles, companionMap, error } = validateAndGroup(all)
     if (error) { setUploadError(error); return }
 
     setUploadError(null)
     try {
       for (const file of programFiles) {
-        await uploadFile(file, selectedAppId)
+        const stem = file.name.replace(/\.(cbl|cob|c)$/i, '')
+        const companion = companionMap?.get(stem) ?? null
+        await uploadFile(file, selectedAppId, companion)
       }
       await startApplicationAnalysis(selectedAppId, 'sequential')
       onBatchStarted(selectedAppId)
@@ -337,13 +350,15 @@ export default function Sidebar({
     folderRef.current.value = ''
     if (all.length === 0) return
 
-    const { programFiles, error } = validateAndGroup(all)
+    const { programFiles, companionMap, error } = validateAndGroup(all)
     if (error) { setUploadError(error); return }
 
     setUploadError(null)
     const folderName = all[0].webkitRelativePath.split('/')[0] || 'Application'
     setDefaultFolderName(folderName.toUpperCase())
     setFolderFiles(programFiles)
+    setAllFiles(all)
+    setCompanionMap(companionMap ?? new Map())
   }
 
   async function handleCreateProject(name) {
@@ -360,8 +375,8 @@ export default function Sidebar({
 
   return (
     <div style={{ width: 200, background: '#1e293b', borderRight: '1px solid #334155', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-      <input ref={fileRef} type="file" multiple accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFilesSelect} />
-      <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u" style={{ display: 'none' }} onChange={handleFolderSelect} />
+      <input ref={fileRef} type="file" multiple accept=".cbl,.cob,.c,.u,.s" style={{ display: 'none' }} onChange={handleFilesSelect} />
+      <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u,.s" style={{ display: 'none' }} onChange={handleFolderSelect} />
       {uploadError && (
         <div style={{ position: 'absolute', bottom: 48, left: 8, right: 8, background: '#450a0a', border: '1px solid #f87171', borderRadius: 6, padding: '8px 10px', fontSize: 11, color: '#fca5a5', zIndex: 20 }}
           onClick={() => setUploadError(null)}>
@@ -403,10 +418,13 @@ export default function Sidebar({
       {folderFiles && (
         <ConfirmationModal
           files={folderFiles}
+          companionMap={companionMap}
           defaultName={defaultFolderName}
-          onClose={() => setFolderFiles(null)}
+          onClose={() => { setFolderFiles(null); setAllFiles([]); setCompanionMap(new Map()) }}
           onStarted={(appId) => {
             setFolderFiles(null)
+            setAllFiles([])
+            setCompanionMap(new Map())
             onBatchStarted(appId)
             loadApps()
           }}

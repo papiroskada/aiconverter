@@ -72,10 +72,13 @@ router.get('/:id/chunks', async (req, res, next) => {
 })
 
 // POST /api/programs/upload
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'companion', maxCount: 1 }]), async (req, res) => {
   try {
     const applicationId = req.body.application_id || null
-    const program = await uploadAndStartAnalysis(req.file, sseEmitters, applicationId)
+    const file = req.files?.file?.[0]
+    const companion = req.files?.companion?.[0] ?? null
+    if (!file) return res.status(400).json({ error: 'No file provided' })
+    const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId, companion)
     res.status(202).json({ id: program.id, status: program.status })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
