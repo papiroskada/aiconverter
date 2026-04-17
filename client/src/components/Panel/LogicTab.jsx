@@ -4,15 +4,29 @@ const cardStyle = { background: '#0f172a', borderRadius: 6, padding: '10px 12px'
 const tagStyle = { display: 'inline-block', background: '#1e3a5f', color: '#93c5fd', borderRadius: 4, padding: '2px 7px', fontSize: 11, marginBottom: 6 }
 
 export default function LogicTab({ analysis }) {
-  const entryPoints = analysis?.entry_points ?? []
-  const errorCatalog = analysis?.error_catalog ?? []
+  const entryPoints  = analysis?.entry_points  ?? []
+  const errorCatalog = analysis?.error_catalog  ?? []
+  const preDispatch  = analysis?.pre_dispatch   ?? []
 
-  if (!entryPoints.length && !errorCatalog.length) {
+  if (!preDispatch.length && !entryPoints.length && !errorCatalog.length) {
     return <p style={{ color: '#64748b', margin: 0 }}>No business logic extracted yet.</p>
   }
 
   return (
     <div>
+      {preDispatch.length > 0 && (
+        <div style={sectionStyle}>
+          <label style={labelStyle}>Pre-Dispatch (runs before every mode)</label>
+          <div style={{ ...cardStyle, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {preDispatch.map((name, i) => (
+              <span key={i} style={{ background: '#172554', color: '#93c5fd', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}>
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {entryPoints.length > 0 && (
         <div style={sectionStyle}>
           <label style={labelStyle}>Entry Points</label>
