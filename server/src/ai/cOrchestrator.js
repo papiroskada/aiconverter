@@ -82,17 +82,19 @@ function buildCEntryPointContext(structural, chunks, funcNames, callGraph, preDi
   return `${structural}\n\nFUNCTIONS:\n${fnList || '(none)'}`
 }
 
-function mapResult(spec) {
+function mapResult(spec, preDispatch = [], twoStep = false) {
   const params = spec.parameters ?? []
   return {
     business_purpose: spec.businessPurpose ?? '',
     input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
     output_contract:  JSON.stringify(params.filter(p => p.direction === 'out' || p.direction === 'inout')),
-    entry_points:          (spec.entryPoints ?? []).map(({ paragraphNames: _, ...ep }) => ep),
+    entry_points:          spec.entryPoints ?? [],
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
     db_tables: spec.dbTables ?? [],
     file_ops:  [],
+    pre_dispatch:      preDispatch,
+    analysis_two_step: twoStep,
   }
 }
 
@@ -116,44 +118,46 @@ export async function runCAnalysis({ cText, uText, chunks, provider, emit, progr
 
   if (estimateCTokens(fullContext) <= TOKEN_LIMIT) {
     spec = await provider.extractBusinessAnalysis(fullContext, signal, 'c')
-  } else {
-    // Large file: 5-line snippets for step 1
-    const snippetChunks = chunks.map(c => ({
-      ...c,
-      cobol_text: c.cobol_text.split('\n').slice(0, 5).join('\n'),
-    }))
-    const snippetContext = buildCContext(structural, snippetChunks)
+    logAndEmit('done', { stage: 'analysis', message: 'C analysis complete' })
+    emit('progress', { stage: 'step', step: 2, total: 2 })
+    return mapResult(spec, preDispatch, false)
+  }
 
-    logAndEmit('start', { stage: 'analysis', message: 'Large C file — step 1: identifying entry points' })
-    spec = await provider.extractBusinessAnalysis(snippetContext, signal, 'c')
+  // Large file: 5-line snippets for step 1
+  const snippetChunks = chunks.map(c => ({
+    ...c,
+    cobol_text: c.cobol_text.split('\n').slice(0, 5).join('\n'),
+  }))
+  const snippetContext = buildCContext(structural, snippetChunks)
 
-    const entryPoints = spec.entryPoints ?? []
-    if (entryPoints.length > 0) {
-      logAndEmit('start', { stage: 'analysis', message: `Step 2: analysing ${entryPoints.length} entry point(s)` })
-      emit('progress', { stage: 'step', step: 2, total: 2 })
+  logAndEmit('start', { stage: 'analysis', message: 'Large C file — step 1: identifying entry points' })
+  spec = await provider.extractBusinessAnalysis(snippetContext, signal, 'c')
 
-      const detailed = await Promise.all(
-        entryPoints.map(async (ep) => {
-          if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
-          const names = ep.paragraphNames ?? []
-          if (!names.length) return ep
-          try {
-            const epContext = buildCEntryPointContext(structural, chunks, names, callGraph, preDispatch)
-            const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal, 'c')
-            return { ...ep, ...detail, paragraphNames: undefined }
-          } catch (err) {
-            if (err.name === 'AbortError') throw err
-            logger.error(programName, `Entry point detail failed: ${err.message}`)
-            return { ...ep, paragraphNames: undefined }
-          }
-        })
-      )
-      spec = { ...spec, entryPoints: detailed }
-    }
+  const entryPoints = spec.entryPoints ?? []
+  if (entryPoints.length > 0) {
+    logAndEmit('start', { stage: 'analysis', message: `Step 2: analysing ${entryPoints.length} entry point(s)` })
+    emit('progress', { stage: 'step', step: 2, total: 2 })
+
+    const detailed = await Promise.all(
+      entryPoints.map(async (ep) => {
+        if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+        const names = ep.paragraphNames ?? []
+        if (!names.length) return ep
+        try {
+          const epContext = buildCEntryPointContext(structural, chunks, names, callGraph, preDispatch)
+          const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal, 'c')
+          return { ...ep, ...detail }
+        } catch (err) {
+          if (err.name === 'AbortError') throw err
+          logger.error(programName, `Entry point detail failed: ${err.message}`)
+          return ep
+        }
+      })
+    )
+    spec = { ...spec, entryPoints: detailed }
   }
 
   logAndEmit('done', { stage: 'analysis', message: 'C analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-
-  return mapResult(spec)
+  return mapResult(spec, preDispatch, true)
 }
