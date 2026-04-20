@@ -51,3 +51,24 @@ export async function getAnalysisByProgramId(program_id) {
   )
   return rows[0] || null
 }
+
+export async function updateFlag(program_id, condition, flag) {
+  if (flag === null) {
+    const { rows } = await pool.query(
+      `UPDATE program_analysis
+       SET flags = flags - $2, updated_at = NOW()
+       WHERE program_id = $1
+       RETURNING flags`,
+      [program_id, condition]
+    )
+    return rows[0]?.flags ?? {}
+  }
+  const { rows } = await pool.query(
+    `UPDATE program_analysis
+     SET flags = flags || jsonb_build_object($2::text, $3::text), updated_at = NOW()
+     WHERE program_id = $1
+     RETURNING flags`,
+    [program_id, condition, flag]
+  )
+  return rows[0]?.flags ?? {}
+}

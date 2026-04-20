@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { getAllPrograms, findProgramById } from '../models/programs.js'
 import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
-import { getAnalysisByProgramId } from '../models/programAnalysis.js'
+import { getAnalysisByProgramId, updateFlag } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
 
@@ -112,6 +112,21 @@ router.post('/:id/cancel', async (req, res, next) => {
     res.json({ cancelled })
   } catch (err) {
     next(err)
+  }
+})
+
+// PATCH /api/programs/:id/flags
+router.patch('/:id/flags', async (req, res) => {
+  try {
+    const { condition, flag } = req.body
+    if (!condition) return res.status(400).json({ error: 'condition is required' })
+    if (flag !== null && flag !== undefined && !['warning', 'deprecated'].includes(flag)) {
+      return res.status(400).json({ error: 'flag must be warning, deprecated, or null' })
+    }
+    const flags = await updateFlag(req.params.id, condition, flag ?? null)
+    res.json(flags)
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 

@@ -17,6 +17,7 @@ vi.mock('../../src/models/programEdges.js', () => ({
 }))
 vi.mock('../../src/models/programAnalysis.js', () => ({
   getAnalysisByProgramId: vi.fn().mockResolvedValue(null),
+  updateFlag: vi.fn().mockResolvedValue({ "FUNC='INS'": 'warning' }),
 }))
 vi.mock('../../src/models/programChunks.js', () => ({
   getChunksByProgramId: vi.fn().mockResolvedValue([]),
@@ -56,5 +57,32 @@ describe('DELETE /api/programs/:id', () => {
     const res = await request(app).delete('/api/programs/p1')
     expect(res.status).toBe(409)
     expect(res.body.error).toBe('Cannot delete program while analyzing')
+  })
+})
+
+describe('PATCH /api/programs/:id/flags', () => {
+  it('sets a warning flag and returns updated flags', async () => {
+    const res = await request(app)
+      .patch('/api/programs/p1/flags')
+      .send({ condition: "FUNC='INS'", flag: 'warning' })
+    expect(res.status).toBe(200)
+    expect(res.body["FUNC='INS'"]).toBe('warning')
+  })
+
+  it('returns 400 when condition is missing', async () => {
+    const res = await request(app)
+      .patch('/api/programs/p1/flags')
+      .send({ flag: 'warning' })
+    expect(res.status).toBe(400)
+  })
+
+  it('accepts null flag to clear', async () => {
+    const { updateFlag } = await import('../../src/models/programAnalysis.js')
+    updateFlag.mockResolvedValueOnce({})
+    const res = await request(app)
+      .patch('/api/programs/p1/flags')
+      .send({ condition: "FUNC='INS'", flag: null })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({})
   })
 })
