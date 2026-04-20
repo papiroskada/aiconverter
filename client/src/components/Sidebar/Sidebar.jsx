@@ -374,7 +374,7 @@ export default function Sidebar({
   const selectedApp = applications.find(a => a.id === selectedAppId) ?? null
 
   return (
-    <div style={{ width: 200, background: '#1e293b', borderRight: '1px solid #334155', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+    <div style={{ width: 160, background: '#1e293b', borderRight: '1px solid #334155', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
       <input ref={fileRef} type="file" multiple accept=".cbl,.cob,.c,.u,.s" style={{ display: 'none' }} onChange={handleFilesSelect} />
       <input ref={folderRef} type="file" webkitdirectory="" accept=".cbl,.cob,.c,.u,.s" style={{ display: 'none' }} onChange={handleFolderSelect} />
       {uploadError && (
