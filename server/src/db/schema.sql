@@ -116,3 +116,7 @@ ALTER TABLE program_analysis
   ADD COLUMN IF NOT EXISTS pre_dispatch       JSONB   NOT NULL DEFAULT '[]',
   ADD COLUMN IF NOT EXISTS analysis_model     TEXT,
   ADD COLUMN IF NOT EXISTS analysis_two_step  BOOLEAN;
+
+-- Per-entry-point user flags
+ALTER TABLE program_analysis
+  ADD COLUMN IF NOT EXISTS flags JSONB NOT NULL DEFAULT '{}';
