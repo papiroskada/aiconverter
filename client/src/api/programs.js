@@ -45,3 +45,13 @@ export async function cancelAnalysis(id) {
   if (!res.ok) throw new Error('Cancel failed')
   return res.json()
 }
+
+export async function patchFlags(id, condition, flag) {
+  const res = await fetch(`${BASE}/${id}/flags`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ condition, flag }),
+  })
+  if (!res.ok) throw new Error('Failed to update flag')
+  return res.json()
+}

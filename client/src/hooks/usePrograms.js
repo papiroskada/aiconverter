@@ -34,7 +34,15 @@ function buildNodes(programs) {
     id: p.id,
     type: 'programNode',
     position: { x: 0, y: 0 },
-    data: { name: p.name, status: p.status, isPhantom: p.status === 'pending', applicationId: p.application_id ?? null },
+    data: {
+      name: p.name,
+      status: p.status,
+      isPhantom: p.status === 'pending',
+      applicationId: p.application_id ?? null,
+      fileType: p.file_type ?? 'cobol',
+      entryPointCount: p.entry_point_count ?? 0,
+      flags: p.flags ?? {},
+    },
   }))
 }
 

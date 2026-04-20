@@ -60,7 +60,15 @@ export async function deleteProgramsByApplicationId(applicationId) {
 }
 
 export async function getAllPrograms() {
-  const { rows } = await pool.query('SELECT id, name, status, application_id, file_type FROM programs ORDER BY created_at ASC')
+  const { rows } = await pool.query(`
+    SELECT
+      p.id, p.name, p.status, p.application_id, p.file_type,
+      COALESCE(jsonb_array_length(pa.entry_points), 0)::int AS entry_point_count,
+      COALESCE(pa.flags, '{}') AS flags
+    FROM programs p
+    LEFT JOIN program_analysis pa ON pa.program_id = p.id
+    ORDER BY p.created_at ASC
+  `)
   return rows
 }
 
