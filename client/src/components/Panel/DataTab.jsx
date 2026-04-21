@@ -58,6 +58,37 @@ export default function DataTab({ analysis }) {
         </div>
       )}
 
+      {(() => {
+        const entryPoints = (analysis?.entry_points ?? []).filter(ep => ep.dbOperations?.length > 0)
+        if (!entryPoints.length) return null
+        return (
+          <div>
+            <label style={labelStyle}>Per-Mode Operations</label>
+            {entryPoints.map((ep, i) => (
+              <div key={i} style={rowStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <span style={{ background: '#1e3a5f', color: '#93c5fd', borderRadius: 3, padding: '1px 6px', fontSize: 10, fontFamily: 'monospace' }}>
+                    {ep.condition}
+                  </span>
+                  <span style={{ color: '#94a3b8', fontSize: 11 }}>{ep.businessName}</span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {ep.dbOperations.map((op, j) => (
+                    <span key={j} style={{
+                      background: '#0f172a', border: '1px solid #1e293b',
+                      borderRadius: 3, padding: '2px 7px', fontSize: 10, fontFamily: 'monospace',
+                      color: opColor(op.operation),
+                    }}>
+                      {op.table} {op.operation}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
+
       {fileOps.length > 0 && (
         <div>
           <label style={labelStyle}>File I/O</label>
