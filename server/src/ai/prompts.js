@@ -23,7 +23,15 @@ Return ONLY valid JSON matching this schema exactly:
       "steps": ["ordered business action 1", "ordered business action 2"],
       "sideEffects": ["what changes in the system: inserts into TABLE-X", "increments COUNTER-Y"],
       "returns": "what is set or returned on success",
-      "errors": ["ERROR-CODE-OR-CONDITION: business meaning and consequence"]
+      "errors": ["ERROR-CODE-OR-CONDITION: business meaning and consequence"],
+      "dbOperations": [
+        {
+          "table": "TABLE-NAME",
+          "operation": "SELECT|INSERT|UPDATE|DELETE",
+          "keyFields": ["KEY-FIELD-USED-IN-WHERE-OR-INDEX"],
+          "notFoundAction": "error 1500 | fallback read with key X | return empty | n/a"
+        }
+      ]
     }
   ],
   "errorCatalog": [
@@ -66,6 +74,7 @@ Rules:
 - externalDependencies: only CALLS representing meaningful business operations; EXCLUDE calls starting with C_ (C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — middleware boilerplate
 - dbTables: combine DATABASE OPERATIONS (EXEC SQL) and DATABASE OPERATIONS (TUX MIDDLEWARE); if you see PREFIX2 operating on the same table as PREFIX in the paragraph text, that is a second buffer for the same table (not a different table) — the parser already deduplicates these; for each table also capture: keyFields = fields used in the WHERE clause or key lookup (e.g. primary key field); notFoundAction = what happens if the row does not exist (error code, fallback read with a different key, or "return empty"); if no key info is available use []; if write-only (INSERT/UPDATE/DELETE) set notFoundAction to "n/a"; return [] if none
 - fileIO: file I/O from FILE I/O (SELECT statements) and OPEN/READ/WRITE/CLOSE in paragraphs; return [] if none
+- entryPoints[].dbOperations: for each entry point list ONLY the db tables actually touched by that entry point's paragraphs (including pre-dispatch); use the same keyFields/notFoundAction logic as top-level dbTables; INSERT/UPDATE/DELETE → notFoundAction "n/a"; return [] if none
 
 Analysis discipline (from CAPI_RULES.md):
 - Paragraph names are labels, not contracts — do NOT infer behavior from the name alone (VALIDATE-ACCESS in one program checks branches, in another it reads entirely different tables); always base analysis on the actual code content of each paragraph provided
@@ -85,7 +94,15 @@ Return ONLY valid JSON matching this schema exactly:
   "steps": ["ordered business action 1", "ordered business action 2"],
   "sideEffects": ["what changes in the system: inserts into TABLE-X", "increments COUNTER-Y"],
   "returns": "what is set or returned on success",
-  "errors": ["ERROR-CODE-OR-CONDITION: business meaning and consequence"]
+  "errors": ["ERROR-CODE-OR-CONDITION: business meaning and consequence"],
+  "dbOperations": [
+    {
+      "table": "TABLE-NAME",
+      "operation": "SELECT|INSERT|UPDATE|DELETE",
+      "keyFields": ["KEY-FIELD-USED-IN-WHERE-OR-INDEX"],
+      "notFoundAction": "error 1500 | fallback read with key X | return empty | n/a"
+    }
+  ]
 }
 
 Rules:
@@ -93,6 +110,7 @@ Rules:
 - sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - returns: what output parameters or status values are set on success
 - errors: reference ERROR ENTRIES from context — format as "seqNo (dataElement): business meaning"; use actual seq numbers from the list, not generic descriptions
+- dbOperations: list ONLY tables touched by this entry point's paragraphs (including pre-dispatch); keyFields = fields in WHERE clause or key lookup; notFoundAction = what happens if row not found (error code, fallback, "return empty"); INSERT/UPDATE/DELETE → notFoundAction "n/a"; return [] if none
 - Paragraph names are labels: do NOT infer behavior from name alone — base analysis on actual paragraph code provided
 - For table reads: describe what happens after (conditional errors, fallback reads, field derivation)
 `
@@ -122,7 +140,15 @@ Return ONLY valid JSON matching this schema exactly:
       "steps": ["ordered business action 1", "ordered business action 2"],
       "sideEffects": ["what changes: updates TABLE-X", "calls service Y"],
       "returns": "what output fields are populated on success",
-      "errors": ["ERROR-CODE: business meaning and consequence"]
+      "errors": ["ERROR-CODE: business meaning and consequence"],
+      "dbOperations": [
+        {
+          "table": "table-name",
+          "operation": "SGE|RDN|UPD|DEL|INL",
+          "keyFields": ["key-field-used-in-lookup"],
+          "notFoundAction": "error code | fallback read | return empty | n/a"
+        }
+      ]
     }
   ],
   "errorCatalog": [
@@ -161,6 +187,7 @@ Rules:
 - errorCatalog: use ERROR CALLS — each entry has code and field pre-extracted; add businessMeaning and systemAction from code context
 - externalDependencies: use SERVICE CALLS — only meaningful business calls; exclude c_xxx utility calls (c_writelnkarea, c_fmtShrtDate, c_getdatetm etc.)
 - dbTables: use DATABASE CALLS (svcCallPlnsqlio) — table and operations pre-extracted; for each call also capture: keyFields = fields passed as lookup key; notFoundAction = what happens if no row found (error code, fallback call, or "return empty"); INL/UPD/DEL → notFoundAction "n/a"
+- entryPoints[].dbOperations: list ONLY tables touched by this entry point's functions (including pre-dispatch); same keyFields/notFoundAction logic as dbTables; INL/UPD/DEL → notFoundAction "n/a"; return [] if none
 - fileIO: always []
 
 Analysis discipline:
@@ -181,7 +208,15 @@ Return ONLY valid JSON matching this schema exactly:
   "steps": ["ordered business action 1", "ordered business action 2"],
   "sideEffects": ["what changes in the system"],
   "returns": "what output fields or status are set on success",
-  "errors": ["ERROR-CODE: business meaning and consequence"]
+  "errors": ["ERROR-CODE: business meaning and consequence"],
+  "dbOperations": [
+    {
+      "table": "table-name",
+      "operation": "SGE|RDN|UPD|DEL|INL",
+      "keyFields": ["key-field-used-in-lookup"],
+      "notFoundAction": "error code | fallback read | return empty | n/a"
+    }
+  ]
 }
 
 Rules:
@@ -189,6 +224,7 @@ Rules:
 - sideEffects: every DB change, service call triggered, output field populated
 - returns: which output fields are set, what status code
 - errors: reference ERROR CALLS from context — use actual codes from the list
+- dbOperations: list ONLY tables touched by this entry point's functions (including pre-dispatch); keyFields = fields in WHERE/lookup; notFoundAction = what happens if row not found; INL/UPD/DEL → notFoundAction "n/a"; return [] if none
 - Function names are labels: base analysis on actual function code, not the name
 - For DB reads: describe what happens after (conditional errors, fallback, field derivation)
 `

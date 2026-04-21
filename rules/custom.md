@@ -1,0 +1,1 @@
+before file procesing remove everything that is after OPEN-REC. paragraph in the .cbl file to destile it (exact match only — line must trim to exactly "OPEN-REC.", not "PERFORM OPEN-REC." or similar)

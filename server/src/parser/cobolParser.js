@@ -83,6 +83,10 @@ export function preprocessCobol(text) {
     }
   }
 
+  // truncate at OPEN-REC. paragraph (exact match only, not PERFORM OPEN-REC.)
+  const openRecIdx = processed.findIndex(line => line.trim() === 'OPEN-REC.')
+  if (openRecIdx !== -1) processed.splice(openRecIdx + 1)
+
   // collapse consecutive blank lines
   const out = []
   let prevBlank = false
