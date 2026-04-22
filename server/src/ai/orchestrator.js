@@ -14,6 +14,17 @@ export function estimateTokens(text) {
   return Math.ceil(text.length / 4)
 }
 
+function picToType(pic) {
+  if (!pic) return 'object'
+  if (/^X/i.test(pic)) return 'string'
+  if (/^[S9]/i.test(pic)) return 'number'
+  return 'string'
+}
+
+function cobolToCamel(name) {
+  return name.toLowerCase().replace(/-+(.)/g, (_, c) => c.toUpperCase())
+}
+
 function extractSelectFiles(cobolText) {
   return (cobolText.match(/SELECT\s+\S+\s+ASSIGN[^\n]*/gi) ?? [])
 }
@@ -126,12 +137,21 @@ function buildEntryPointContext(structural, paragraphChunks, paragraphNames, per
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
 
-function mapResult(spec, preDispatch = [], twoStep = false) {
-  const params = spec.parameters ?? []
+function mapResult(spec, linkageVars, preDispatch = [], twoStep = false) {
+  const descMap = new Map((spec.parameters ?? []).map(p => [p.cobolName?.toUpperCase(), p.description ?? '']))
+
+  const contracts = linkageVars.map(v => ({
+    name: cobolToCamel(v.name),
+    cobolName: v.name,
+    type: picToType(v.pic),
+    direction: v.direction ?? 'inout',
+    description: descMap.get(v.name) ?? '',
+  }))
+
   return {
     business_purpose: spec.businessPurpose ?? '',
-    input_contract:   JSON.stringify(params.filter(p => p.direction !== 'out')),
-    output_contract:  JSON.stringify(params.filter(p => p.direction !== 'in')),
+    input_contract:   JSON.stringify(contracts.filter(p => p.direction !== 'out')),
+    output_contract:  JSON.stringify(contracts.filter(p => p.direction !== 'in')),
     entry_points:          spec.entryPoints ?? [],
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
@@ -172,7 +192,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
     logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
     emit('progress', { stage: 'step', step: 2, total: 2 })
-    return mapResult(spec, preDispatchNames, false)
+    return mapResult(spec, linkageVars, preDispatchNames, false)
   }
 
   // ── Large file: two-step ───────────────────────────────────────────────
@@ -217,5 +237,5 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
 
   logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-  return mapResult(spec, preDispatchNames, true)
+  return mapResult(spec, linkageVars, preDispatchNames, true)
 }

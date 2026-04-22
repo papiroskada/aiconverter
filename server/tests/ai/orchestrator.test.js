@@ -88,13 +88,39 @@ describe('runAnalysis — small file', () => {
     expect(result.business_purpose).toBe('Manages user record lifecycle.')
   })
 
-  it('splits parameters into input_contract and output_contract', async () => {
+  it('derives contract types from parsed PIC, not AI spec', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
-    const input = JSON.parse(result.input_contract)
+    const cobolText = [
+      'DATA DIVISION.',
+      'LINKAGE SECTION.',
+      ' 01 CPSRI-PART-ID PIC X(8).',
+      ' 01 CPSRO-RTN-STS PIC 9(4).',
+      ' 01 CPSRI-COUNT    PIC S9(7).',
+      ' 01 CPSRI-GROUP.',
+      '    05 CPSRI-SUB PIC X(3).',
+      'PROCEDURE DIVISION.',
+    ].join('\n')
+    const result = await runAnalysis({ cobolText, chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const input  = JSON.parse(result.input_contract)
     const output = JSON.parse(result.output_contract)
-    expect(input.some(p => p.direction === 'out')).toBe(false)
-    expect(output.some(p => p.direction === 'in')).toBe(false)
+
+    // input must not contain direction:out fields
+    expect(input.every(p => p.direction !== 'out')).toBe(true)
+    // output must not contain direction:in fields
+    expect(output.every(p => p.direction !== 'in')).toBe(true)
+
+    // types are derived from PIC
+    const partId = input.find(p => p.cobolName === 'CPSRI-PART-ID')
+    expect(partId.type).toBe('string')   // PIC X(8) → string
+
+    const rtnSts = output.find(p => p.cobolName === 'CPSRO-RTN-STS')
+    expect(rtnSts.type).toBe('number')   // PIC 9(4) → number
+
+    const count = input.find(p => p.cobolName === 'CPSRI-COUNT')
+    expect(count.type).toBe('number')    // PIC S9(7) → number
+
+    const group = input.find(p => p.cobolName === 'CPSRI-GROUP')
+    expect(group.type).toBe('object')    // no PIC → object
   })
 
   it('returns entry_points array', async () => {
