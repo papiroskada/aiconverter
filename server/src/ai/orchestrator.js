@@ -1,5 +1,6 @@
 import { logger } from '../logger.js'
-import { extractLinkageVars, extractCalls, extractExecSql, extractConstructs, extractWorkingStorage, extractTuxTables, extractErrorEntries, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../parser/cobolParser.js'
+import { extractLinkageVars, extractWorkingStorage, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../parser/cobolParser.js'
+import { extractCalls, extractExecSql, extractConstructs, extractTuxTables, extractErrorEntries } from '../parser/cobolExtractor.js'
 
 const TOKEN_LIMIT = 80000   // above this → two-step
 const MODEL_LIMIT = 100000  // above this → shrink snippets further
