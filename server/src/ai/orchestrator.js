@@ -60,8 +60,15 @@ function findPreDispatchParagraphs(paragraphChunks) {
 function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames) {
   const callList = calls.map(c => `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`).join('\n') || '  (none)'
   const fileList = selectFiles.join('\n') || '  (none)'
-  const sqlList  = execSqlTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
-  const tuxList  = tuxTables.map(t => `  ${t.table}: ${t.operation}`).join('\n') || '  (none)'
+  const sqlList  = execSqlTables.map(t => {
+    const keyPart = t.keyFields?.length ? `  key: ${t.keyFields.join(', ')}` : ''
+    const fieldPart = t.fields?.length ? `  fields: ${t.fields.join(', ')}` : ''
+    return `  ${t.table}: ${t.operation}${keyPart}${fieldPart}`
+  }).join('\n') || '  (none)'
+  const tuxList  = tuxTables.map(t => {
+    const keyPart = t.keyFields?.length ? `  key: ${t.keyFields.join(', ')}` : ''
+    return `  ${t.table}: ${t.operation}${keyPart}`
+  }).join('\n') || '  (none)'
   const errList  = errorEntries.length
     ? errorEntries.map(e => e.dataElement ? `${e.seqNo} (${e.dataElement})` : `${e.seqNo}`).join(', ')
     : 'none'
