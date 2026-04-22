@@ -142,7 +142,7 @@ export function extractTuxTables(cobolText) {
 
   const tables = new Map()
 
-  // Strategy 1 (fallback): MOVE "OP" TO prefix-FUNC
+  // Strategy 1: MOVE "OP" TO prefix-FUNC (keep as fallback for programs that have it)
   const moveRe = /MOVE\s+"(RD|INS|UPD|DEL|CTN|NXT|FWD|SRT|WRT|LCK)"\s+TO\s+(\w+)-FUNC/gi
   while ((m = moveRe.exec(normalised)) !== null) {
     const opCode = m[1].toUpperCase()
@@ -154,9 +154,75 @@ export function extractTuxTables(cobolText) {
     tables.get(tableName).ops.add(op)
   }
 
+  // Strategy 2: paragraph naming convention — {VERB}-{PREFIX}[-extra-tokens]
+  const normLines = normalised.split('\n')
+  const paraRe = /^\s*([A-Z][A-Z0-9-]+)\./i
+
+  const paraToTable = new Map()
+  for (const line of normLines) {
+    const pm = line.match(paraRe)
+    if (!pm) continue
+    const paraName = pm[1].toUpperCase()
+    const parts = paraName.split('-')
+
+    for (let i = parts.length - 1; i >= 1; i--) {
+      const candidatePrefix = parts[i]
+      if (!prefixMap.has(candidatePrefix)) continue
+      const verbPart = parts.slice(0, i).join('-')
+      const op = paraVerbToOp(verbPart)
+      if (op) {
+        paraToTable.set(paraName, { tableName: prefixMap.get(candidatePrefix), prefix: candidatePrefix, op })
+      }
+      break
+    }
+  }
+
+  // Register operations from all named paragraphs directly
+  for (const [, { tableName, op }] of paraToTable) {
+    if (!tables.has(tableName)) tables.set(tableName, { ops: new Set(), keyFields: new Set() })
+    tables.get(tableName).ops.add(op)
+  }
+
+  // Scan PERFORM call sites to collect key fields
+  const INFRA_SUFFIXES = new Set(['FUNC', 'TABNAM', 'CURSOR', 'KEYNUM', 'LOCK', 'STATUS', 'DATA'])
+  const performRe = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/i
+
+  for (let i = 0; i < normLines.length; i++) {
+    const perfMatch = normLines[i].match(performRe)
+    if (!perfMatch) continue
+    const paraName = perfMatch[1].toUpperCase()
+    const entry = paraToTable.get(paraName)
+    if (!entry) continue
+
+    const { tableName, prefix } = entry
+    if (!tables.has(tableName)) tables.set(tableName, { ops: new Set(), keyFields: new Set() })
+
+    const moveToRe = new RegExp(`\\bMOVE\\s+\\S+\\s+TO\\s+(${prefix}-[A-Z0-9-]+)`, 'i')
+    for (let j = Math.max(0, i - 15); j < i; j++) {
+      const mv = normLines[j].match(moveToRe)
+      if (!mv) continue
+      const fieldName = mv[1].toUpperCase()
+      const lastToken = fieldName.split('-').pop()
+      if (!INFRA_SUFFIXES.has(lastToken)) {
+        tables.get(tableName).keyFields.add(fieldName.replace(/-/g, '_').toLowerCase())
+      }
+    }
+  }
+
   return [...tables.entries()].map(([table, entry]) => ({
     table,
     operation: OP_ORDER.filter(o => entry.ops.has(o)).join('/'),
     keyFields: [...entry.keyFields],
   }))
+}
+
+function paraVerbToOp(verbPart) {
+  const firstToken = verbPart.split('-')[0]
+  return {
+    READ: 'READ', VLD: 'READ', VALIDATE: 'READ', GET: 'READ',
+    START: 'READ', FETCH: 'READ', FIND: 'READ',
+    INS: 'INSERT', INSERT: 'INSERT', ADD: 'INSERT',
+    UPD: 'UPDATE', UPDATE: 'UPDATE', MOD: 'UPDATE', MODIFY: 'UPDATE',
+    DEL: 'DELETE', DELETE: 'DELETE', RMV: 'DELETE', REMOVE: 'DELETE',
+  }[firstToken]
 }

@@ -135,6 +135,143 @@ describe('extractTuxTables', () => {
     expect(result[0]).toHaveProperty('keyFields')
     expect(Array.isArray(result[0].keyFields)).toBe(true)
   })
+
+  it('detects READ from VLD-EUR paragraph name (COMMON-FUNC pattern)', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+      10  EUR-FUNC    PIC X(3) VALUE "OPN".
+    PROCEDURE DIVISION.
+    BUSINESS-LOGIC.
+      PERFORM VLD-EUR THRU VLD-EUR-EXIT.
+    VLD-EUR.
+      MOVE "RD" TO COMMON-FUNC.
+      PERFORM COMMON-REC.
+    VLD-EUR-EXIT. EXIT.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].table).toBe('exreur')
+    expect(result[0].operation).toBe('READ')
+  })
+
+  it('detects INSERT from INS-EUR paragraph name', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    INS-EUR.
+      MOVE "INS" TO COMMON-FUNC.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].operation).toBe('INSERT')
+  })
+
+  it('merges operations detected by both strategies on same table', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+      10  EUR-FUNC  PIC X(3) VALUE "OPN".
+    PROCEDURE DIVISION.
+    MAIN.
+      MOVE "RD" TO EUR-FUNC.
+      PERFORM UPD-EUR.
+    UPD-EUR.
+      MOVE "UPD" TO COMMON-FUNC.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].operation).toBe('READ/UPDATE')
+  })
+
+  it('skips OPEN-EUR and CLOSE-EUR paragraphs', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    OPEN-EUR.
+      PERFORM COMMON-OPEN.
+    CLOSE-EUR.
+      PERFORM COMMON-CLOSE.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(0)
+  })
+
+  it('handles READ-EUR-REC suffix (paragraph name with extra tokens after prefix)', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    READ-EUR-REC.
+      MOVE "RD" TO COMMON-FUNC.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].operation).toBe('READ')
+  })
+
+  it('extracts key field from MOVE before PERFORM VLD-EUR', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    BUSINESS-LOGIC.
+      MOVE VLLRI-EXEC-LGN-ID  TO  EUR-EXEC-LGN-ID.
+      PERFORM VLD-EUR THRU VLD-EUR-EXIT.
+    VLD-EUR.
+      PERFORM COMMON-REC.
+    VLD-EUR-EXIT. EXIT.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result[0].keyFields).toContain('eur_exec_lgn_id')
+  })
+
+  it('excludes infrastructure fields (FUNC, TABNAM, CURSOR, KEYNUM, LOCK, STATUS, DATA)', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    MAIN.
+      MOVE "RD"   TO EUR-FUNC.
+      MOVE 0      TO EUR-KEYNUM.
+      MOVE 1      TO EUR-CURSOR.
+      MOVE X      TO EUR-EXEC-LGN-ID.
+      PERFORM VLD-EUR.
+    VLD-EUR.
+      PERFORM COMMON-REC.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result[0].keyFields).toEqual(['eur_exec_lgn_id'])
+  })
+
+  it('collects key fields from multiple PERFORM call sites for same table', () => {
+    const cobol = `
+    WORKING-STORAGE SECTION.
+      10  EUR-TABNAM
+          PIC X(8) VALUE "exreur".
+    PROCEDURE DIVISION.
+    STEP-1.
+      MOVE VLLRI-EXEC-LGN-ID TO EUR-EXEC-LGN-ID.
+      PERFORM VLD-EUR.
+    STEP-2.
+      MOVE VLLRI-PRD-ID TO EUR-PRD-ID.
+      PERFORM VLD-EUR.
+    VLD-EUR.
+      PERFORM COMMON-REC.
+  `
+    const result = extractTuxTables(cobol)
+    expect(result[0].keyFields).toContain('eur_exec_lgn_id')
+    expect(result[0].keyFields).toContain('eur_prd_id')
+  })
 })
 
 describe('extractErrorEntries', () => {
