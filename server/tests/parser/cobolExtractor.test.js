@@ -57,6 +57,68 @@ describe('extractExecSql', () => {
     expect(result[0].operation).toBe('INSERT')
     expect(result[0].table).toBe('EXRLOG')
   })
+
+  it('extracts keyFields from WHERE clause', () => {
+    const cobol = `
+    EXEC SQL
+      SELECT EUR-ENBL-FLG
+      INTO :EUR-ENBL-FLG
+      FROM EXREUR
+      WHERE EUR-EXEC-LGN-ID = :EUR-EXEC-LGN-ID
+    END-EXEC
+  `
+    const result = extractExecSql(cobol)
+    expect(result[0].keyFields).toEqual(['EUR-EXEC-LGN-ID'])
+  })
+
+  it('extracts multiple keyFields from compound WHERE', () => {
+    const cobol = `
+    EXEC SQL
+      SELECT CNS-ENV-NM
+      INTO :CNS-ENV-NM
+      FROM EXTCNS
+      WHERE CNS-EXEC-LGN-ID = :CNS-EXEC-LGN-ID
+        AND CNS-ENV-NM = :CNS-ENV-NM
+    END-EXEC
+  `
+    const result = extractExecSql(cobol)
+    expect(result[0].keyFields).toEqual(['CNS-EXEC-LGN-ID', 'CNS-ENV-NM'])
+  })
+
+  it('extracts fields from SELECT column list (not SELECT *)', () => {
+    const cobol = `
+    EXEC SQL
+      SELECT EUR-ENBL-FLG, EUR-STATUS
+      INTO :EUR-ENBL-FLG, :EUR-STATUS
+      FROM EXREUR
+      WHERE EUR-EXEC-LGN-ID = :EUR-EXEC-LGN-ID
+    END-EXEC
+  `
+    const result = extractExecSql(cobol)
+    expect(result[0].fields).toEqual(['EUR-ENBL-FLG', 'EUR-STATUS'])
+  })
+
+  it('returns empty fields for SELECT *', () => {
+    const cobol = `
+    EXEC SQL
+      SELECT * FROM EXREUR
+      WHERE EUR-ID = :EUR-ID
+    END-EXEC
+  `
+    const result = extractExecSql(cobol)
+    expect(result[0].fields).toEqual([])
+  })
+
+  it('returns empty keyFields when no WHERE clause', () => {
+    const cobol = `
+    EXEC SQL
+      INSERT INTO EXRLOG (COL1) VALUES (:VAL1)
+    END-EXEC
+  `
+    const result = extractExecSql(cobol)
+    expect(result[0].keyFields).toEqual([])
+    expect(result[0].fields).toEqual([])
+  })
 })
 
 describe('extractConstructs', () => {

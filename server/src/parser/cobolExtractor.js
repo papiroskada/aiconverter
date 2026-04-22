@@ -29,31 +29,62 @@ export function extractExecSql(cobolText) {
   const blockRe = /EXEC\s+SQL([\s\S]*?)END-EXEC/gi
   let m
   while ((m = blockRe.exec(normalised)) !== null) {
-    const block = m[1].toUpperCase()
+    const block = m[1]
+    const blockUpper = block.toUpperCase()
     let op = null
     let table = null
 
-    const sel = block.match(/SELECT[\s\S]*?FROM\s+(\S+)/)
-    const ins = block.match(/INSERT\s+INTO\s+(\S+)/)
-    const upd = block.match(/UPDATE\s+(\S+)/)
-    const del = block.match(/DELETE\s+FROM\s+(\S+)/)
+    const sel = blockUpper.match(/SELECT[\s\S]*?FROM\s+(\S+)/)
+    const ins = blockUpper.match(/INSERT\s+INTO\s+(\S+)/)
+    const upd = blockUpper.match(/UPDATE\s+(\S+)/)
+    const del = blockUpper.match(/DELETE\s+FROM\s+(\S+)/)
 
     if (sel)      { op = 'SELECT'; table = sel[1] }
     else if (ins) { op = 'INSERT'; table = ins[1] }
     else if (upd) { op = 'UPDATE'; table = upd[1] }
     else if (del) { op = 'DELETE'; table = del[1] }
 
-    if (op && table) {
-      table = table.replace(/[,;()]/g, '')
-      if (!tables.has(table)) tables.set(table, { table, ops: new Set() })
-      tables.get(table).ops.add(op)
+    if (!op || !table) continue
+    table = table.replace(/[,;()]/g, '')
+
+    // Extract SELECT column list (before INTO or FROM)
+    let fields = []
+    if (op === 'SELECT') {
+      const colMatch = blockUpper.match(/SELECT\s+([\s\S]*?)(?:\s+INTO\b|\s+FROM\b)/)
+      if (colMatch) {
+        const colText = colMatch[1].trim()
+        if (colText !== '*' && colText !== '1') {
+          fields = colText.split(',').map(f => f.trim()).filter(Boolean)
+        }
+      }
+    }
+
+    // Extract keyFields from WHERE clause
+    const keyFields = []
+    const whereMatch = blockUpper.match(/\bWHERE\b([\s\S]*)$/)
+    if (whereMatch) {
+      const whereClause = whereMatch[1]
+      const condRe = /\b([A-Z][A-Z0-9-]+)\s*=\s*[:?]/g
+      let wm
+      while ((wm = condRe.exec(whereClause)) !== null) {
+        keyFields.push(wm[1])
+      }
+    }
+
+    if (!tables.has(table)) tables.set(table, { table, ops: new Set(), fields: [], keyFields: [] })
+    const entry = tables.get(table)
+    entry.ops.add(op)
+    if (fields.length && !entry.fields.length) entry.fields = fields
+    for (const kf of keyFields) {
+      if (!entry.keyFields.includes(kf)) entry.keyFields.push(kf)
     }
   }
 
   return [...tables.values()].map(e => ({
     table: e.table,
     operation: [...e.ops].join('/'),
-    fields: [],
+    fields: e.fields,
+    keyFields: e.keyFields,
   }))
 }
 
