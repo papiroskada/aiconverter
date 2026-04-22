@@ -68,7 +68,7 @@ Rules:
 - parameters: use LINKAGE SECTION VARIABLES — field names, PIC types, and direction labels [in]/[out] are pre-analyzed; infer JS type: PIC X = string, PIC 9 = number, group level (no PIC) = object; direction null means infer from context
 - entryPoints: use ENTRY POINT DISPATCH as the starting point — each WHEN entry is one entry point; if ENTRY POINT DISPATCH is (none), look for EVALUATE or IF blocks dispatching on a linkage parameter; if no dispatch create one entry with condition "always"
 - entryPoints[].paragraphNames: list ALL paragraph names relevant to this entry point including PRE-DISPATCH PARAGRAPHS (for large-file second-pass use)
-- entryPoints[].steps: include PRE-DISPATCH PARAGRAPHS logic first (validation, access checks, initial setup) — these run before every mode; then mode-specific steps; describe WHAT HAPPENS FOR THE BUSINESS, not code mechanics
+- entryPoints[].steps: include PRE-DISPATCH PARAGRAPHS logic first (validation, access checks, initial setup) — these run before every mode; then mode-specific steps; each step must name the specific fields, values, and conditions involved so a developer can implement it without reading the COBOL — e.g. "Reads EXREUR with key EUR-EXEC-LGN-ID; if not found, returns error 1500" not "validates user access"; include actual error codes, field names, and conditional branches
 - entryPoints[].sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - errorCatalog: use ERROR ENTRIES as the canonical list — each entry has seqNo and dataElement pre-extracted; populate code=seqNo, add businessMeaning and systemAction from context; include every entry listed
 - externalDependencies: only CALLS representing meaningful business operations; EXCLUDE calls starting with C_ (C_WRITELNKAREA, C_GETPLENV, C_GETDATETM, C_HIGHLOW, C_ISOLATION, C_COMPRESS) — middleware boilerplate
@@ -106,7 +106,7 @@ Return ONLY valid JSON matching this schema exactly:
 }
 
 Rules:
-- steps: start with PRE-DISPATCH PARAGRAPHS logic (validation, access, setup listed in context) — these run before this operation too; then describe the operation-specific WHAT HAPPENS FOR THE BUSINESS, not code mechanics
+- steps: start with PRE-DISPATCH PARAGRAPHS logic (validation, access, setup listed in context) — these run before this operation too; then describe the operation-specific logic; each step must name the specific fields, values, and conditions involved so a developer can implement it without reading the COBOL — e.g. "Reads EXREUR with key EUR-EXEC-LGN-ID; if not found, returns error 1500" not "validates user access"; include actual error codes, field names, and conditional branches
 - sideEffects: every data change, record creation/update/deletion, counter change, external call triggered
 - returns: what output parameters or status values are set on success
 - errors: reference ERROR ENTRIES from context — format as "seqNo (dataElement): business meaning"; use actual seq numbers from the list, not generic descriptions
@@ -183,7 +183,7 @@ Rules:
 - parameters: use INPUT FIELDS and OUTPUT FIELDS sections — derive direction from field name suffix (InpRec = in, OutRec = out); infer JS type: char array = string, int = number
 - entryPoints: use MODE DISPATCH — each case is one entry point; if MODE DISPATCH is (none) create one entry with condition "always"
 - entryPoints[].paragraphNames: list ALL function names for this mode including PRE-DISPATCH FUNCTIONS
-- entryPoints[].steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init — listed in context), then mode-specific steps; describe WHAT HAPPENS FOR THE BUSINESS
+- entryPoints[].steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init — listed in context), then mode-specific steps; each step must name the specific fields, values, and conditions involved — e.g. "Reads exreur with key eur_exec_lgn_id; if not found, returns error 1500" not "validates user"; include actual error codes, field names, and conditional branches
 - errorCatalog: use ERROR CALLS — each entry has code and field pre-extracted; add businessMeaning and systemAction from code context
 - externalDependencies: use SERVICE CALLS — only meaningful business calls; exclude c_xxx utility calls (c_writelnkarea, c_fmtShrtDate, c_getdatetm etc.)
 - dbTables: use DATABASE CALLS (svcCallPlnsqlio) — table and operations pre-extracted; for each call also capture: keyFields = fields passed as lookup key; notFoundAction = what happens if no row found (error code, fallback call, or "return empty"); INL/UPD/DEL → notFoundAction "n/a"
@@ -220,7 +220,7 @@ Return ONLY valid JSON matching this schema exactly:
 }
 
 Rules:
-- steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init from context) — these run before this operation; then operation-specific WHAT HAPPENS FOR THE BUSINESS
+- steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init from context) — these run before this operation; then operation-specific logic; each step must name the specific fields, values, and conditions involved — e.g. "Reads exreur with key eur_exec_lgn_id; if not found, returns error 1500"; include actual error codes, field names, and conditional branches
 - sideEffects: every DB change, service call triggered, output field populated
 - returns: which output fields are set, what status code
 - errors: reference ERROR CALLS from context — use actual codes from the list
