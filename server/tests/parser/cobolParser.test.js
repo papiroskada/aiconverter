@@ -569,3 +569,17 @@ describe('collectMissingParagraphs', () => {
     expect(collectMissingParagraphs(graph).size).toBe(0)
   })
 })
+
+describe('splitIntoWindows overlap', () => {
+  it('second window starts 45 lines before end of first window', () => {
+    // 320 lines forces exactly 2 windows (CHUNK_MAX_LINES = 300)
+    const lines = Array.from({ length: 320 }, (_, i) => `    MOVE ${i} TO WS-X.`)
+    const cobol = ` IDENTIFICATION DIVISION.\n PROGRAM-ID. TEST.\n DATA DIVISION.\n WORKING-STORAGE SECTION.\n 01 WS-X PIC 9.\n PROCEDURE DIVISION.\n LARGE-PARA.\n${lines.join('\n')}`
+    const chunks = parseCobol(cobol)
+    const window1 = chunks.find(c => c.chunk_name === 'LARGE-PARA')
+    const window2 = chunks.find(c => c.chunk_name === 'LARGE-PARA [2]')
+    expect(window1).toBeDefined()
+    expect(window2).toBeDefined()
+    expect(window2.start_line).toBe(window1.end_line - 45 + 1)
+  })
+})
