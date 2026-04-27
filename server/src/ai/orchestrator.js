@@ -142,6 +142,14 @@ function buildEntryPointContext(structural, paragraphChunks, paragraphNames, per
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
 
+export function serializePerformGraph(graph) {
+  return Object.fromEntries([...graph.entries()].map(([k, v]) => [k, [...v]]))
+}
+
+export function deserializePerformGraph(obj) {
+  return new Map(Object.entries(obj).map(([k, v]) => [k, new Set(v)]))
+}
+
 export function validateDbTables(dbTables, execSqlTables, tuxTables) {
   const knownTables = new Set([
     ...execSqlTables.map(t => t.table?.toUpperCase()).filter(Boolean),
@@ -179,21 +187,38 @@ function mapResult(spec, linkageVars, preDispatch = [], twoStep = false, execSql
   }
 }
 
-export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal }) {
+export async function runAnalysis({ cobolText, chunks, provider, emit, programName, signal, structuralCacheIn = null }) {
   const paragraphChunks = chunks.filter(c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph')
 
-  const linkageVars      = extractLinkageVars(cobolText)
-  const wsVars           = extractWorkingStorage(cobolText)
-  const calls            = extractCalls(cobolText)
-  const execSqlTables    = extractExecSql(cobolText)
-  const constructs       = extractConstructs(cobolText)
-  const selectFiles      = extractSelectFiles(cobolText)
-  const tuxTables        = extractTuxTables(cobolText)
-  const errorEntries     = extractErrorEntries(cobolText)
-  const evaluateDispatch = extractEvaluateDispatch(cobolText)
-  const performGraph     = extractPerformGraph(paragraphChunks)
-  const missingParagraphs = collectMissingParagraphs(performGraph)
-  const preDispatchNames = findPreDispatchParagraphs(paragraphChunks)
+  let linkageVars, wsVars, calls, execSqlTables, constructs, selectFiles, tuxTables, errorEntries, evaluateDispatch, performGraph, preDispatchNames, missingParagraphs
+
+  if (structuralCacheIn) {
+    linkageVars      = structuralCacheIn.linkageVars
+    wsVars           = structuralCacheIn.wsVars
+    calls            = structuralCacheIn.calls
+    execSqlTables    = structuralCacheIn.execSqlTables
+    constructs       = structuralCacheIn.constructs
+    selectFiles      = structuralCacheIn.selectFiles
+    tuxTables        = structuralCacheIn.tuxTables
+    errorEntries     = structuralCacheIn.errorEntries
+    evaluateDispatch = structuralCacheIn.evaluateDispatch
+    preDispatchNames = structuralCacheIn.preDispatchNames
+    performGraph     = deserializePerformGraph(structuralCacheIn.performGraph)
+    missingParagraphs = new Set(structuralCacheIn.missingParagraphs ?? [])
+  } else {
+    linkageVars      = extractLinkageVars(cobolText)
+    wsVars           = extractWorkingStorage(cobolText)
+    calls            = extractCalls(cobolText)
+    execSqlTables    = extractExecSql(cobolText)
+    constructs       = extractConstructs(cobolText)
+    selectFiles      = extractSelectFiles(cobolText)
+    tuxTables        = extractTuxTables(cobolText)
+    errorEntries     = extractErrorEntries(cobolText)
+    evaluateDispatch = extractEvaluateDispatch(cobolText)
+    performGraph     = extractPerformGraph(paragraphChunks)
+    preDispatchNames = findPreDispatchParagraphs(paragraphChunks)
+    missingParagraphs = collectMissingParagraphs(performGraph)
+  }
 
   const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames, missingParagraphs)
   const fullContext = buildContext(structural, paragraphChunks)
@@ -205,12 +230,19 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
 
   let spec
 
+  const _buildCache = () => structuralCacheIn ?? {
+    linkageVars, wsVars, calls, execSqlTables, constructs, selectFiles,
+    tuxTables, errorEntries, evaluateDispatch, preDispatchNames,
+    missingParagraphs: [...missingParagraphs],
+    performGraph: serializePerformGraph(performGraph),
+  }
+
   if (estimateTokens(fullContext) <= TOKEN_LIMIT) {
     // ── Small file: one call with full paragraph code ──────────────────────
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
     logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
     emit('progress', { stage: 'step', step: 2, total: 2 })
-    return mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables)
+    return { result: mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables), structuralCache: _buildCache() }
   }
 
   // ── Large file: two-step ───────────────────────────────────────────────
@@ -255,5 +287,5 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
 
   logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-  return mapResult(spec, linkageVars, preDispatchNames, true, execSqlTables, tuxTables)
+  return { result: mapResult(spec, linkageVars, preDispatchNames, true, execSqlTables, tuxTables), structuralCache: _buildCache() }
 }

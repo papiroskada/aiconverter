@@ -7,7 +7,7 @@ import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
 import pool from '../db/client.js'
-import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms } from '../models/programs.js'
+import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms, saveStructuralCache } from '../models/programs.js'
 import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
@@ -49,7 +49,12 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
         signal: controller.signal,
       })
     } else {
-      result = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal })
+      const structuralCacheIn = program.structural_cache ?? null
+      const analysis = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal, structuralCacheIn })
+      result = analysis.result
+      if (!structuralCacheIn) {
+        await saveStructuralCache(programId, analysis.structuralCache)
+      }
     }
 
     const analysisModel = settings.ai_provider === 'openai'

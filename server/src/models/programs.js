@@ -89,3 +89,10 @@ export async function deleteOrphanedPhantoms() {
     )
   `)
 }
+
+export async function saveStructuralCache(id, cache) {
+  await pool.query(
+    'UPDATE programs SET structural_cache = $1, updated_at = NOW() WHERE id = $2',
+    [JSON.stringify(cache), id]
+  )
+}

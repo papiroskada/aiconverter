@@ -120,3 +120,7 @@ ALTER TABLE program_analysis
 -- Per-entry-point user flags
 ALTER TABLE program_analysis
   ADD COLUMN IF NOT EXISTS flags JSONB NOT NULL DEFAULT '{}';
+
+-- Structural analysis cache: avoids re-running regex extraction on re-analysis
+ALTER TABLE programs
+  ADD COLUMN IF NOT EXISTS structural_cache JSONB;

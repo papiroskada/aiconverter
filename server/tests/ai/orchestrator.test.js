@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { BaseProvider } from '../../src/ai/providers/base.js'
-import { runAnalysis, estimateTokens, validateDbTables } from '../../src/ai/orchestrator.js'
+import { runAnalysis, estimateTokens, validateDbTables, serializePerformGraph, deserializePerformGraph } from '../../src/ai/orchestrator.js'
 
 describe('BaseProvider', () => {
   it('throws NotImplemented on extractBusinessAnalysis', async () => {
@@ -84,7 +84,7 @@ describe('runAnalysis — small file', () => {
 
   it('returns business_purpose from spec', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(result.business_purpose).toBe('Manages user record lifecycle.')
   })
 
@@ -100,7 +100,7 @@ describe('runAnalysis — small file', () => {
       '    05 CPSRI-SUB PIC X(3).',
       'PROCEDURE DIVISION.',
     ].join('\n')
-    const result = await runAnalysis({ cobolText, chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText, chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     const input  = JSON.parse(result.input_contract)
     const output = JSON.parse(result.output_contract)
 
@@ -125,27 +125,27 @@ describe('runAnalysis — small file', () => {
 
   it('returns entry_points array', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(Array.isArray(result.entry_points)).toBe(true)
     expect(result.entry_points[0].businessName).toBe('Read User')
   })
 
   it('returns error_catalog array', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(result.error_catalog[0].code).toBe('STATUS-35')
   })
 
   it('returns external_dependencies array', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(result.external_dependencies[0].program).toBe('C_CURPID')
     expect(result.external_dependencies[0].purpose).toBeDefined()
   })
 
   it('maps fileIO to file_ops', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(result.file_ops[0]).toEqual({ file: 'USR-FILE', operations: ['OPEN', 'READ', 'CLOSE'] })
   })
 
@@ -159,14 +159,22 @@ describe('runAnalysis — small file', () => {
 
   it('returns analysis_two_step: false for small file', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(result.analysis_two_step).toBe(false)
   })
 
   it('returns pre_dispatch as array', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
     expect(Array.isArray(result.pre_dispatch)).toBe(true)
+  })
+
+  it('returns { result, structuralCache } object', async () => {
+    const provider = makeProvider()
+    const analysis = await runAnalysis({ cobolText: '', chunks: makeChunks(), provider, emit: () => {}, programName: 'T' })
+    expect(analysis).toHaveProperty('result')
+    expect(analysis).toHaveProperty('structuralCache')
+    expect(typeof analysis.structuralCache).toBe('object')
   })
 })
 
@@ -189,28 +197,48 @@ describe('runAnalysis — large file two-step', () => {
     const provider = makeProvider({
       analyzeEntryPoint: vi.fn().mockRejectedValue(new Error('timeout')),
     })
-    const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
     expect(result.entry_points.length).toBe(1)
     expect(result.entry_points[0].businessName).toBe('Read User')
   })
 
   it('merges detail steps into entry_points', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
     expect(result.entry_points[0].steps).toEqual(['detailed step'])
     expect(result.entry_points[0].sideEffects).toEqual(['updates counter'])
   })
 
   it('keeps paragraphNames in final entry_points', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
     expect(Array.isArray(result.entry_points[0].paragraphNames)).toBe(true)
   })
 
   it('returns analysis_two_step: true for large file', async () => {
     const provider = makeProvider()
-    const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
+    const { result } = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
     expect(result.analysis_two_step).toBe(true)
+  })
+})
+
+describe('serializePerformGraph / deserializePerformGraph', () => {
+  it('round-trips a Map<string, Set<string>>', () => {
+    const original = new Map([
+      ['MAIN', new Set(['INIT', 'CLEANUP'])],
+      ['INIT', new Set(['SUB-A'])],
+      ['CLEANUP', new Set()],
+    ])
+    const serialized = serializePerformGraph(original)
+    expect(typeof serialized).toBe('object')
+    expect(Array.isArray(serialized['MAIN'])).toBe(true)
+    expect(serialized['MAIN']).toContain('INIT')
+
+    const restored = deserializePerformGraph(serialized)
+    expect(restored).toBeInstanceOf(Map)
+    expect(restored.get('MAIN')).toBeInstanceOf(Set)
+    expect(restored.get('MAIN').has('INIT')).toBe(true)
+    expect(restored.get('CLEANUP').size).toBe(0)
   })
 })
 
