@@ -1,4 +1,4 @@
-import { parseCobol, extractLinkage, extractWorkingStorage, extractLinkageVars, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../../src/parser/cobolParser.js'
+import { parseCobol, extractLinkage, extractWorkingStorage, extractLinkageVars, extractEvaluateDispatch, extractPerformGraph, resolveTransitive, collectMissingParagraphs } from '../../src/parser/cobolParser.js'
 
 const MINI_COBOL = `
  IDENTIFICATION DIVISION.
@@ -506,5 +506,66 @@ describe('resolveTransitive', () => {
   it('returns Set with only start when start not in graph', () => {
     const graph = new Map([['OTHER', new Set()]])
     expect(resolveTransitive('UNKNOWN', graph)).toEqual(new Set(['UNKNOWN']))
+  })
+})
+
+describe('extractPerformGraph — THRU support', () => {
+  it('PERFORM A THRU C includes all paragraphs in range', () => {
+    const chunks = [
+      { chunk_type: 'paragraph', chunk_name: 'INIT-A', cobol_text: 'INIT-A.\n    PERFORM INIT-B THRU INIT-D.' },
+      { chunk_type: 'paragraph', chunk_name: 'INIT-B', cobol_text: 'INIT-B.\n    MOVE 1 TO X.' },
+      { chunk_type: 'paragraph', chunk_name: 'INIT-C', cobol_text: 'INIT-C.\n    MOVE 2 TO X.' },
+      { chunk_type: 'paragraph', chunk_name: 'INIT-D', cobol_text: 'INIT-D.\n    CONTINUE.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    const performed = graph.get('INIT-A')
+    expect(performed.has('INIT-B')).toBe(true)
+    expect(performed.has('INIT-C')).toBe(true)
+    expect(performed.has('INIT-D')).toBe(true)
+  })
+
+  it('PERFORM A THROUGH C (long form) includes range', () => {
+    const chunks = [
+      { chunk_type: 'paragraph', chunk_name: 'MAIN', cobol_text: 'MAIN.\n    PERFORM STEP-1 THROUGH STEP-3.' },
+      { chunk_type: 'paragraph', chunk_name: 'STEP-1', cobol_text: 'STEP-1.\n    CONTINUE.' },
+      { chunk_type: 'paragraph', chunk_name: 'STEP-2', cobol_text: 'STEP-2.\n    CONTINUE.' },
+      { chunk_type: 'paragraph', chunk_name: 'STEP-3', cobol_text: 'STEP-3.\n    CONTINUE.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    const performed = graph.get('MAIN')
+    expect(performed.has('STEP-1')).toBe(true)
+    expect(performed.has('STEP-2')).toBe(true)
+    expect(performed.has('STEP-3')).toBe(true)
+  })
+
+  it('THRU fallback: adds both endpoints when range is not resolvable in paraOrder', () => {
+    const chunks = [
+      { chunk_type: 'paragraph', chunk_name: 'MAIN', cobol_text: 'MAIN.\n    PERFORM UNKNOWN-START THRU UNKNOWN-END.' },
+    ]
+    const graph = extractPerformGraph(chunks)
+    const performed = graph.get('MAIN')
+    expect(performed.has('UNKNOWN-START')).toBe(true)
+    expect(performed.has('UNKNOWN-END')).toBe(true)
+  })
+})
+
+describe('collectMissingParagraphs', () => {
+  it('returns paragraph names that are PERFORM targets but not graph keys', () => {
+    const graph = new Map([
+      ['MAIN', new Set(['SUB-A', 'GHOST-PARA'])],
+      ['SUB-A', new Set()],
+    ])
+    const missing = collectMissingParagraphs(graph)
+    expect(missing.has('GHOST-PARA')).toBe(true)
+    expect(missing.has('SUB-A')).toBe(false)
+    expect(missing.has('MAIN')).toBe(false)
+  })
+
+  it('returns empty set when all targets are defined', () => {
+    const graph = new Map([
+      ['MAIN', new Set(['INIT'])],
+      ['INIT', new Set()],
+    ])
+    expect(collectMissingParagraphs(graph).size).toBe(0)
   })
 })

@@ -1,5 +1,5 @@
 import { logger } from '../logger.js'
-import { extractLinkageVars, extractWorkingStorage, extractEvaluateDispatch, extractPerformGraph, resolveTransitive } from '../parser/cobolParser.js'
+import { extractLinkageVars, extractWorkingStorage, extractEvaluateDispatch, extractPerformGraph, resolveTransitive, collectMissingParagraphs } from '../parser/cobolParser.js'
 import { extractCalls, extractExecSql, extractConstructs, extractTuxTables, extractErrorEntries } from '../parser/cobolExtractor.js'
 
 const TOKEN_LIMIT = 80000   // above this → two-step
@@ -68,7 +68,7 @@ function findPreDispatchParagraphs(paragraphChunks) {
   return [...new Set(preDispatch)]
 }
 
-function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames) {
+function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames, missingParagraphs = new Set()) {
   const callList = calls.map(c => `  CALL '${c.program}'${c.using ? ` USING ${c.using}` : ''}`).join('\n') || '  (none)'
   const fileList = selectFiles.join('\n') || '  (none)'
   const sqlList  = execSqlTables.map(t => {
@@ -90,6 +90,10 @@ function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFil
     : '  (none)'
   const preList = preDispatchNames.length ? preDispatchNames.join(', ') : '(none)'
 
+  const missingList = missingParagraphs.size > 0
+    ? `WARNING — PERFORM targets not found as paragraph definitions (possible dynamic PERFORM or THRU gaps): ${[...missingParagraphs].join(', ')}`
+    : null
+
   return [
     `LINKAGE SECTION VARIABLES:\n${formatLinkageVars(linkageVars)}`,
     `WORKING-STORAGE VARIABLES:\n${formatWsVars(wsVars)}`,
@@ -101,6 +105,7 @@ function buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFil
     `ENTRY POINT DISPATCH:\n${dispatchList}`,
     `PRE-DISPATCH PARAGRAPHS (shared by all entry points, run before every mode): ${preList}`,
     `ERROR ENTRIES: ${errList}`,
+    ...(missingList ? [missingList] : []),
   ].join('\n\n')
 }
 
@@ -175,9 +180,10 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   const errorEntries     = extractErrorEntries(cobolText)
   const evaluateDispatch = extractEvaluateDispatch(cobolText)
   const performGraph     = extractPerformGraph(paragraphChunks)
+  const missingParagraphs = collectMissingParagraphs(performGraph)
   const preDispatchNames = findPreDispatchParagraphs(paragraphChunks)
 
-  const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames)
+  const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames, missingParagraphs)
   const fullContext = buildContext(structural, paragraphChunks)
 
   logAndEmit(emit, programName, 'start', { stage: 'analysis', message: 'Analysing business logic...' })

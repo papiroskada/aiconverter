@@ -330,19 +330,49 @@ const PERFORM_KEYWORDS = new Set([
 
 export function extractPerformGraph(paragraphChunks) {
   const graph = new Map()
+
+  // Build ordered list of unique paragraph names for THRU range resolution
+  const paraOrderSet = new Set()
+  const paraOrder = []
+  for (const chunk of paragraphChunks) {
+    if (chunk.chunk_type === 'data_summary') continue
+    const name = chunk.chunk_name.replace(/\s+\[\d+\]$/, '').toUpperCase()
+    if (!paraOrderSet.has(name)) { paraOrderSet.add(name); paraOrder.push(name) }
+  }
+
+  const thruRe = /\bPERFORM\s+([A-Z][A-Z0-9-]+)\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+)/gi
   const paraRe = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/gi
 
   for (const chunk of paragraphChunks) {
     if (chunk.chunk_type === 'data_summary') continue
-    const name = chunk.chunk_name.replace(/\s+\[\d+\]$/, '')
+    const name = chunk.chunk_name.replace(/\s+\[\d+\]$/, '').toUpperCase()
     if (graph.has(name)) continue  // skip subsequent windows of the same paragraph
     const performed = new Set()
-    const re = new RegExp(paraRe.source, paraRe.flags)
+
+    // First pass: PERFORM X THRU Y — expand the range
+    const thruReLocal = new RegExp(thruRe.source, thruRe.flags)
     let m
+    while ((m = thruReLocal.exec(chunk.cobol_text)) !== null) {
+      const start = m[1].toUpperCase()
+      const end   = m[2].toUpperCase()
+      const startIdx = paraOrder.indexOf(start)
+      const endIdx   = paraOrder.indexOf(end)
+      if (startIdx !== -1 && endIdx !== -1 && endIdx >= startIdx) {
+        for (let i = startIdx; i <= endIdx; i++) performed.add(paraOrder[i])
+      } else {
+        // Fallback: at least include both endpoints
+        performed.add(start)
+        performed.add(end)
+      }
+    }
+
+    // Second pass: plain PERFORM X — skip keyword-only targets; THRU start-names re-added here are benign duplicates in the Set
+    const re = new RegExp(paraRe.source, paraRe.flags)
     while ((m = re.exec(chunk.cobol_text)) !== null) {
       const target = m[1].toUpperCase()
       if (!PERFORM_KEYWORDS.has(target)) performed.add(target)
     }
+
     graph.set(name, performed)
   }
 
@@ -363,4 +393,15 @@ export function resolveTransitive(startParagraph, graph) {
   }
 
   return visited
+}
+
+export function collectMissingParagraphs(graph) {
+  const defined = new Set(graph.keys())
+  const missing = new Set()
+  for (const targets of graph.values()) {
+    for (const t of targets) {
+      if (!defined.has(t)) missing.add(t)
+    }
+  }
+  return missing
 }
