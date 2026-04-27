@@ -1,5 +1,6 @@
 import { findProgramByName, createProgram, updateProgramStatus } from '../models/programs.js'
 import { upsertEdge, backfillPhantomEdges } from '../models/programEdges.js'
+import { backfillCallTargets } from '../models/programCalls.js'
 
 export async function updateGraphAfterAnalysis(fromProgramId, externalCalls) {
   for (const call of externalCalls) {
@@ -27,4 +28,5 @@ export async function updateGraphAfterAnalysis(fromProgramId, externalCalls) {
 
 export async function backfillEdgesForNewProgram(program) {
   await backfillPhantomEdges(program.name, program.id)
+  await backfillCallTargets(program.name, program.id)
 }

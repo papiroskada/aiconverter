@@ -5,6 +5,7 @@ import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
+import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage() })
@@ -17,6 +18,26 @@ router.get('/', async (req, res, next) => {
   try {
     const [programs, edges] = await Promise.all([getAllPrograms(), getAllEdges()])
     res.json({ programs, edges })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// GET /api/programs/callers/:name — returns all programs that CALL the given program name
+router.get('/callers/:name', async (req, res, next) => {
+  try {
+    const callers = await getCallersOf(req.params.name)
+    res.json({ callers })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// GET /api/programs/:id/calls — returns all programs this program calls (structural)
+router.get('/:id/calls', async (req, res, next) => {
+  try {
+    const calls = await getCallsFromProgram(req.params.id)
+    res.json({ calls })
   } catch (err) {
     next(err)
   }

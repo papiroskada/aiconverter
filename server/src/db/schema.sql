@@ -124,3 +124,14 @@ ALTER TABLE program_analysis
 -- Structural analysis cache: avoids re-running regex extraction on re-analysis
 ALTER TABLE programs
   ADD COLUMN IF NOT EXISTS structural_cache JSONB;
+
+-- Inter-program call dependency table (from structural extraction, not AI-filtered)
+CREATE TABLE IF NOT EXISTS program_calls (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  caller_program_id UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  callee_name       TEXT NOT NULL,
+  callee_program_id UUID REFERENCES programs(id) ON DELETE SET NULL,
+  call_context      TEXT NOT NULL DEFAULT '',
+  created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (caller_program_id, callee_name)
+);

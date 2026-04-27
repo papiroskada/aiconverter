@@ -10,9 +10,13 @@ const edgesModel = {
   upsertEdge: vi.fn(),
   backfillPhantomEdges: vi.fn(),
 }
+const callsModel = {
+  backfillCallTargets: vi.fn(),
+}
 
 vi.mock('../../src/models/programs.js', () => programsModel)
 vi.mock('../../src/models/programEdges.js', () => edgesModel)
+vi.mock('../../src/models/programCalls.js', () => callsModel)
 
 const { updateGraphAfterAnalysis, backfillEdgesForNewProgram } = await import('../../src/services/graphService.js')
 
@@ -20,6 +24,7 @@ describe('updateGraphAfterAnalysis', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     programsModel.updateProgramStatus.mockResolvedValue({})
+    callsModel.backfillCallTargets.mockResolvedValue({})
   })
 
   it('creates a pending program node for an unknown program name', async () => {
@@ -96,5 +101,11 @@ describe('backfillEdgesForNewProgram', () => {
   it('calls backfillPhantomEdges with program name and id', async () => {
     await backfillEdgesForNewProgram({ id: 'p-id', name: 'NEWPROG' })
     expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id')
+  })
+
+  it('backfillEdgesForNewProgram also calls backfillCallTargets', async () => {
+    await backfillEdgesForNewProgram({ id: 'p-id', name: 'NEWPROG' })
+    expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id')
+    expect(callsModel.backfillCallTargets).toHaveBeenCalledWith('NEWPROG', 'p-id')
   })
 })

@@ -22,6 +22,10 @@ vi.mock('../../src/models/programAnalysis.js', () => ({
 vi.mock('../../src/models/programChunks.js', () => ({
   getChunksByProgramId: vi.fn().mockResolvedValue([]),
 }))
+vi.mock('../../src/models/programCalls.js', () => ({
+  getCallersOf: vi.fn().mockResolvedValue([{ id: 'p1', name: 'CALLER', call_context: '' }]),
+  getCallsFromProgram: vi.fn().mockResolvedValue([{ callee_name: 'ARCUSACS', callee_program_id: null, call_context: '' }]),
+}))
 
 describe('GET /api/programs', () => {
   it('returns programs and edges', async () => {
@@ -84,5 +88,23 @@ describe('PATCH /api/programs/:id/flags', () => {
       .send({ condition: "FUNC='INS'", flag: null })
     expect(res.status).toBe(200)
     expect(res.body).toEqual({})
+  })
+})
+
+describe('GET /api/programs/callers/:name', () => {
+  it('returns callers list', async () => {
+    const res = await request(app).get('/api/programs/callers/ARCUSACS')
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveProperty('callers')
+    expect(Array.isArray(res.body.callers)).toBe(true)
+  })
+})
+
+describe('GET /api/programs/:id/calls', () => {
+  it('returns calls list', async () => {
+    const res = await request(app).get('/api/programs/p1/calls')
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveProperty('calls')
+    expect(Array.isArray(res.body.calls)).toBe(true)
   })
 })

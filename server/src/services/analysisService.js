@@ -11,6 +11,7 @@ import { createProgram, updateProgramStatus, findProgramByName, findProgramById,
 import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
+import { upsertCall } from '../models/programCalls.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UPLOADS_DIR = join(__dirname, '../../../uploads')
@@ -37,6 +38,7 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
     const fileType = program?.file_type ?? 'cobol'
 
     let result
+    let structuralCache = null
     if (fileType === 'c') {
       const { runCAnalysis } = await import('../ai/cOrchestrator.js')
       result = await runCAnalysis({
@@ -52,6 +54,7 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
       const structuralCacheIn = program.structural_cache ?? null
       const analysis = await runAnalysis({ cobolText, chunks: savedChunks, provider, emit, programName, signal: controller.signal, structuralCacheIn })
       result = analysis.result
+      structuralCache = analysis.structuralCache
       if (!structuralCacheIn) {
         await saveStructuralCache(programId, analysis.structuralCache)
       }
@@ -62,6 +65,17 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
       : (settings.claude_model_interface ?? 'claude-sonnet-4-6')
     await upsertBusinessAnalysis(programId, { ...result, analysis_model: analysisModel })
     await updateGraphAfterAnalysis(programId, (result.external_dependencies ?? []).map(d => ({ program: d.program, using: '' })))
+    for (const call of (structuralCache?.calls ?? [])) {
+      const calleeName = call.program?.toUpperCase()
+      if (!calleeName) continue
+      const target = await findProgramByName(calleeName)
+      await upsertCall({
+        caller_program_id: programId,
+        callee_name: calleeName,
+        callee_program_id: target?.id ?? null,
+        call_context: call.using ?? '',
+      })
+    }
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
     emit('done', { programId })
   } catch (err) {
