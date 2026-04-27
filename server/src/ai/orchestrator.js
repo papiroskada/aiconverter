@@ -142,7 +142,19 @@ function buildEntryPointContext(structural, paragraphChunks, paragraphNames, per
   return `${structural}\n\nPARAGRAPHS:\n${paragraphList || '(none)'}`
 }
 
-function mapResult(spec, linkageVars, preDispatch = [], twoStep = false) {
+export function validateDbTables(dbTables, execSqlTables, tuxTables) {
+  const knownTables = new Set([
+    ...execSqlTables.map(t => t.table?.toUpperCase()).filter(Boolean),
+    ...tuxTables.map(t => t.table?.toUpperCase()).filter(Boolean),
+  ])
+  if (knownTables.size === 0) return dbTables
+  return dbTables.map(t => {
+    const name = t.table?.toUpperCase() ?? ''
+    return name && !knownTables.has(name) ? { ...t, ai_hallucinated: true } : t
+  })
+}
+
+function mapResult(spec, linkageVars, preDispatch = [], twoStep = false, execSqlTables = [], tuxTables = []) {
   const descMap = new Map((spec.parameters ?? []).map(p => [p.cobolName?.toUpperCase(), p.description ?? '']))
 
   const contracts = linkageVars.map(v => ({
@@ -160,7 +172,7 @@ function mapResult(spec, linkageVars, preDispatch = [], twoStep = false) {
     entry_points:          spec.entryPoints ?? [],
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
-    db_tables: spec.dbTables ?? [],
+    db_tables: validateDbTables(spec.dbTables ?? [], execSqlTables, tuxTables),
     file_ops:  (spec.fileIO ?? []).map(f => ({ file: f.file, operations: f.operations })),
     pre_dispatch:      preDispatch,
     analysis_two_step: twoStep,
@@ -198,7 +210,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
     logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
     emit('progress', { stage: 'step', step: 2, total: 2 })
-    return mapResult(spec, linkageVars, preDispatchNames, false)
+    return mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables)
   }
 
   // ── Large file: two-step ───────────────────────────────────────────────
@@ -243,5 +255,5 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
 
   logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-  return mapResult(spec, linkageVars, preDispatchNames, true)
+  return mapResult(spec, linkageVars, preDispatchNames, true, execSqlTables, tuxTables)
 }

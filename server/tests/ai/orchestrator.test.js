@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { BaseProvider } from '../../src/ai/providers/base.js'
-import { runAnalysis, estimateTokens } from '../../src/ai/orchestrator.js'
+import { runAnalysis, estimateTokens, validateDbTables } from '../../src/ai/orchestrator.js'
 
 describe('BaseProvider', () => {
   it('throws NotImplemented on extractBusinessAnalysis', async () => {
@@ -211,6 +211,34 @@ describe('runAnalysis — large file two-step', () => {
     const provider = makeProvider()
     const result = await runAnalysis({ cobolText: '', chunks: hugeChunks, provider, emit: () => {}, programName: 'T' })
     expect(result.analysis_two_step).toBe(true)
+  })
+})
+
+describe('validateDbTables', () => {
+  it('flags table not in known set with ai_hallucinated: true', () => {
+    const execSql = [{ table: 'CUSTOMER' }]
+    const tux = []
+    const result = validateDbTables(
+      [{ table: 'CUSTOMER', operation: 'SELECT' }, { table: 'GHOST_TABLE', operation: 'INSERT' }],
+      execSql, tux
+    )
+    expect(result[0].ai_hallucinated).toBeUndefined()
+    expect(result[1].ai_hallucinated).toBe(true)
+  })
+
+  it('comparison is case-insensitive', () => {
+    const execSql = [{ table: 'customer_tbl' }]
+    const result = validateDbTables([{ table: 'CUSTOMER_TBL', operation: 'SELECT' }], execSql, [])
+    expect(result[0].ai_hallucinated).toBeUndefined()
+  })
+
+  it('skips validation when no structural tables found', () => {
+    const result = validateDbTables([{ table: 'ANYTHING', operation: 'SELECT' }], [], [])
+    expect(result[0].ai_hallucinated).toBeUndefined()
+  })
+
+  it('returns empty array when dbTables is empty', () => {
+    expect(validateDbTables([], [{ table: 'X' }], [])).toEqual([])
   })
 })
 
