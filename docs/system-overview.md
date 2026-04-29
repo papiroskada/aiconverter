@@ -27,19 +27,19 @@
 |-----------------|-----------------------------------------------|
 | `data_summary`  | Секції даних: WORKING-STORAGE, LINKAGE, FILE  |
 | `paragraph`     | Параграф PROCEDURE DIVISION (≤ 300 рядків)    |
-| `sub_paragraph` | Параграф > 300 рядків → вікна з overlap 20 рядків |
+| `sub_paragraph` | Параграф > 300 рядків → вікна з overlap 45 рядків |
 
 **Алгоритм:**
 - Вхід в DATA DIVISION → починає збирати секції (`data_summary`).
 - Вхід в PROCEDURE DIVISION → починає збирати параграфи.
 - Параграф детектується по рядку вигляду `PARAGRAPH-NAME.` на початку рядка (без відступу або PROCEDURE PARA).
-- Якщо параграф > 300 рядків, він нарізається вікнами по 300 рядків з перекриттям 20 рядків (`sub_paragraph`).
+- Якщо параграф > 300 рядків, він нарізається вікнами по 300 рядків з перекриттям 45 рядків (`sub_paragraph`). Overlap 45 рядків (~15%) достатній щоб AI у другому вікні бачив відкриті IF/EVALUATE блоки.
 
 ---
 
 ## 3. Структурний аналіз (до AI)
 
-Перед зверненням до AI парсер витягує структурну інформацію прямо з тексту (без AI):
+Перед зверненням до AI парсер витягує структурну інформацію прямо з тексту (без AI). Результати кешуються в `programs.structural_cache` після першого аналізу — при повторному аналізі екстракція пропускається.
 
 | Що витягується                   | Функція                       | Звідки береться                                |
 |----------------------------------|-------------------------------|------------------------------------------------|
@@ -49,7 +49,8 @@
 | EXEC SQL operations              | `extractExecSql`              | SQL блоки між EXEC SQL … END-EXEC              |
 | TUX middleware tables            | `extractTuxTables`            | `{PREFIX}-TABNAM VALUE "tablename"` декларації |
 | EVALUATE dispatch                | `extractEvaluateDispatch`     | EVALUATE … WHEN блоки                          |
-| Paragraph PERFORM graph          | `extractPerformGraph`         | PERFORM виклики між параграфами                |
+| Paragraph PERFORM graph          | `extractPerformGraph`         | PERFORM виклики між параграфами; `PERFORM A THRU B` розширює весь діапазон параграфів від A до B |
+| Missing PERFORM targets          | `collectMissingParagraphs`    | PERFORM цілі, яких немає серед визначених параграфів — сигнал динамічного PERFORM або неповного THRU |
 | Pre-dispatch paragraphs          | `findPreDispatchParagraphs`   | PERFORM до EVALUATE в dispatch-параграфі       |
 | Error entries (SEQ-NO + DATA-EL) | `extractErrorEntries`         | `MOVE nnnn TO *SEQ-NO` + `MOVE "X" TO *DATA-EL` |
 | SELECT file declarations         | `extractSelectFiles`          | `SELECT ... ASSIGN ...`                        |
@@ -94,7 +95,11 @@ ENTRY POINT DISPATCH:
 PRE-DISPATCH PARAGRAPHS: VALIDATE-LINKAGE, INITIAL-SETUP
 
 ERROR ENTRIES: 1500 (EUR-EXEC-LGN-ID), 1600 (CNS-ENV-NM)
+
+WARNING — PERFORM targets not found as paragraph definitions (possible dynamic PERFORM or THRU gaps): WS-DYNAMIC-PARA
 ```
+
+Секція `WARNING` з'являється лише якщо `collectMissingParagraphs` повернув непорожній set.
 
 **`buildContext`** = structural block + повний текст параграфів (для малих файлів).
 
@@ -164,6 +169,8 @@ ERROR ENTRIES: 1500 (EUR-EXEC-LGN-ID), 1600 (CNS-ENV-NM)
 
 **Важливо:** AI не вигадує назви таблиць — правило в промпті вимагає використовувати ТОЧНІ назви з секцій `DATABASE OPERATIONS` вище. Якщо таблиця є в параграфі але не в структурному блоці — писати COBOL-префікс як є.
 
+**Валідація `dbTables` (`validateDbTables`):** після отримання відповіді AI, кожна таблиця в `dbTables` перевіряється проти списку відомих таблиць з `extractExecSql` + `extractTuxTables`. Якщо назва таблиці не знайдена в жодному з джерел — запис помічається `ai_hallucinated: true`. Якщо структурний аналіз не знайшов жодної таблиці (порожній known set) — валідація пропускається (ми не можемо стверджувати що AI помилився).
+
 ### `mapResult` перетворює відповідь AI
 
 | AI поле           | DB поле                                                            |
@@ -193,6 +200,7 @@ ERROR ENTRIES: 1500 (EUR-EXEC-LGN-ID), 1600 (CNS-ENV-NM)
 | `file_type`        | `cobol` або `c`                              |
 | `status`           | `pending` / `analyzing` / `analyzed` / `failed` |
 | `companion_content`| Текст заголовочного `.h` файлу (для C)      |
+| `structural_cache` | JSONB — кеш структурного аналізу (linkageVars, calls, execSqlTables, tuxTables, performGraph тощо). Заповнюється після першого аналізу. При повторному аналізі — структурна екстракція пропускається, дані беруться звідси. |
 
 ### Таблиця `program_chunks`
 Кожен чанк після парсингу:
@@ -214,14 +222,31 @@ ERROR ENTRIES: 1500 (EUR-EXEC-LGN-ID), 1600 (CNS-ENV-NM)
 | `entry_points`          | JSON array — операції, кроки, DB ops, помилки   |
 | `error_catalog`         | JSON array — всі коди помилок з поясненнями     |
 | `external_dependencies` | JSON array — зовнішні CALL (не C_xxx утиліти)   |
-| `db_tables`             | JSON array — таблиці, операції, ключові поля    |
+| `db_tables`             | JSON array — таблиці, операції, ключові поля. Записи що не пройшли cross-validation мають `ai_hallucinated: true` |
 | `file_ops`              | JSON array — файлові I/O операції               |
 | `pre_dispatch`          | JSON array — параграфи, що виконуються до EVALUATE |
 | `analysis_model`        | Модель AI, яка використовувалась                |
 | `analysis_two_step`     | `true` якщо файл великий і аналіз двокроковий   |
 | `flags`                 | JSONB — мітки entry points (warning/deprecated)  |
 
+### Таблиця `program_calls`
+Залежності між програмами на рівні структурної екстракції (всі `CALL` оператори, не фільтровані AI):
+
+| Поле                | Зміст                                                   |
+|---------------------|---------------------------------------------------------|
+| `caller_program_id` | FK → programs.id (програма, що викликає)               |
+| `callee_name`       | Ім'я викликаної програми (uppercase)                    |
+| `callee_program_id` | FK → programs.id (null якщо програма ще не завантажена) |
+| `call_context`      | USING аргументи з CALL оператора                        |
+
+UNIQUE constraint: `(caller_program_id, callee_name)`.
+
+`callee_program_id` автоматично заповнюється при завантаженні цільової програми (`backfillCallTargets`).
+
+**API:**
+- `GET /api/programs/callers/:name` — всі програми, що викликають програму з даним іменем
+- `GET /api/programs/:id/calls` — всі програми, які викликає дана програма
+
 ### Що НЕ зберігається
 - Оригінальний (непрепроцесований) текст файлу — тільки препроцесований на диску.
 - Table catalog (збагачення колонок) — обчислюється на вимогу через `/table-catalog`, не зберігається.
-- Структурний аналіз (linkageVars, execSqlTables тощо) — обчислюється щоразу з тексту файлу при аналізі.
