@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { BaseProvider } from '../../src/ai/providers/base.js'
-import { runAnalysis, estimateTokens, validateDbTables, serializePerformGraph, deserializePerformGraph } from '../../src/ai/orchestrator.js'
+import { runAnalysis, estimateTokens, validateDbTables, serializePerformGraph, deserializePerformGraph, filterEntryPoints } from '../../src/ai/orchestrator.js'
 
 describe('BaseProvider', () => {
   it('throws NotImplemented on extractBusinessAnalysis', async () => {
@@ -321,5 +321,51 @@ describe('runAnalysis — context content', () => {
     expect(ctx).toContain('PRE-DISPATCH PARAGRAPHS')
     expect(ctx).toContain('VALIDATE-LINKAGE')
     expect(ctx).toContain('INITIAL-SETUP')
+  })
+})
+
+describe('filterEntryPoints', () => {
+  const dispatch = [{
+    evaluateSubject: 'WS-FUNC',
+    entries: [
+      { whenValue: '"INS"', performParagraph: 'INSERT-RECORD' },
+      { whenValue: '"UPD"', performParagraph: 'UPDATE-RECORD' },
+    ],
+  }]
+
+  it('keeps entry points whose paragraphNames overlap with dispatch targets', () => {
+    const eps = [
+      { condition: 'FUNC="INS"', paragraphNames: ['INSERT-RECORD', 'VALIDATE-INPUT'] },
+      { condition: 'FUNC="UPD"', paragraphNames: ['UPDATE-RECORD'] },
+    ]
+    expect(filterEntryPoints(eps, dispatch)).toHaveLength(2)
+  })
+
+  it('removes entry points with no overlap with dispatch targets', () => {
+    const eps = [
+      { condition: 'FUNC="INS"', paragraphNames: ['INSERT-RECORD'] },
+      { condition: 'SCCGTERR-NBR-REPL', paragraphNames: ['SCCGTERR-GET-ERR', 'SCCGTERR-REPL-1'] },
+    ]
+    const result = filterEntryPoints(eps, dispatch)
+    expect(result).toHaveLength(1)
+    expect(result[0].condition).toBe('FUNC="INS"')
+  })
+
+  it('always keeps entry points with condition "always"', () => {
+    const eps = [{ condition: 'always', paragraphNames: ['MAIN-LOGIC'] }]
+    expect(filterEntryPoints(eps, dispatch)).toHaveLength(1)
+  })
+
+  it('returns all entry points when evaluateDispatch is empty', () => {
+    const eps = [
+      { condition: 'X', paragraphNames: ['PARA-A'] },
+      { condition: 'Y', paragraphNames: ['PARA-B'] },
+    ]
+    expect(filterEntryPoints(eps, [])).toHaveLength(2)
+  })
+
+  it('matching is case-insensitive', () => {
+    const eps = [{ condition: 'X', paragraphNames: ['insert-record'] }]
+    expect(filterEntryPoints(eps, dispatch)).toHaveLength(1)
   })
 })

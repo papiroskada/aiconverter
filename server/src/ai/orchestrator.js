@@ -162,7 +162,26 @@ export function validateDbTables(dbTables, execSqlTables, tuxTables) {
   })
 }
 
-function mapResult(spec, linkageVars, preDispatch = [], twoStep = false, execSqlTables = [], tuxTables = []) {
+// Keep only entry points whose paragraphNames overlap with structural dispatch targets.
+// When evaluateDispatch is empty (no EVALUATE found) we have no ground truth — keep everything.
+export function filterEntryPoints(entryPoints, evaluateDispatch) {
+  if (!evaluateDispatch || evaluateDispatch.length === 0) return entryPoints
+
+  const dispatchTargets = new Set()
+  for (const dispatch of evaluateDispatch) {
+    for (const entry of dispatch.entries ?? []) {
+      if (entry.performParagraph) dispatchTargets.add(entry.performParagraph.toUpperCase())
+    }
+  }
+  if (dispatchTargets.size === 0) return entryPoints
+
+  return entryPoints.filter(ep => {
+    if (ep.condition === 'always') return true
+    return (ep.paragraphNames ?? []).some(n => dispatchTargets.has(n.toUpperCase()))
+  })
+}
+
+function mapResult(spec, linkageVars, preDispatch = [], twoStep = false, execSqlTables = [], tuxTables = [], evaluateDispatch = []) {
   const descMap = new Map((spec.parameters ?? []).map(p => [p.cobolName?.toUpperCase(), p.description ?? '']))
 
   const contracts = linkageVars.map(v => ({
@@ -177,7 +196,7 @@ function mapResult(spec, linkageVars, preDispatch = [], twoStep = false, execSql
     business_purpose: spec.businessPurpose ?? '',
     input_contract:   JSON.stringify(contracts.filter(p => p.direction !== 'out')),
     output_contract:  JSON.stringify(contracts.filter(p => p.direction !== 'in')),
-    entry_points:          spec.entryPoints ?? [],
+    entry_points:          filterEntryPoints(spec.entryPoints ?? [], evaluateDispatch),
     error_catalog:         spec.errorCatalog ?? [],
     external_dependencies: spec.externalDependencies ?? [],
     db_tables: validateDbTables(spec.dbTables ?? [], execSqlTables, tuxTables),
@@ -242,7 +261,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
     logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
     emit('progress', { stage: 'step', step: 2, total: 2 })
-    return { result: mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables), structuralCache: _buildCache() }
+    return { result: mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables, evaluateDispatch), structuralCache: _buildCache() }
   }
 
   // ── Large file: two-step ───────────────────────────────────────────────
@@ -287,5 +306,5 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
 
   logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
   emit('progress', { stage: 'step', step: 2, total: 2 })
-  return { result: mapResult(spec, linkageVars, preDispatchNames, true, execSqlTables, tuxTables), structuralCache: _buildCache() }
+  return { result: mapResult(spec, linkageVars, preDispatchNames, true, execSqlTables, tuxTables, evaluateDispatch), structuralCache: _buildCache() }
 }
