@@ -206,6 +206,7 @@ export async function reanalyze(programId, sseEmitters) {
 
   if (!program.file_path) throw Object.assign(new Error('No source file found'), { status: 404 })
   await updateProgramStatus(programId, 'analyzing')
+  await saveStructuralCache(programId, null)
   const rawText = readFileSync(program.file_path, 'utf8')
   const cobolText = (program.file_type ?? 'cobol') === 'cobol' ? preprocessCobol(rawText) : rawText
   const existingChunks = await getChunksByProgramId(programId)
