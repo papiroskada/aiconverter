@@ -334,6 +334,38 @@ describe('extractTuxTables', () => {
     expect(result[0].keyFields).toContain('eur_exec_lgn_id')
     expect(result[0].keyFields).toContain('eur_prd_id')
   })
+
+  it('detects tables via PERFORM targets when paragraph definitions are truncated (suffix match)', () => {
+    // EXRCDV-TABNAM declares the table but the READ-CDV paragraph definition is absent
+    // (simulates OPEN-REC truncation cutting off paragraph definitions from inline copy-books)
+    const cobol = `
+      10  EXRCDV-TABNAM  PIC X(6)  VALUE
+                         "exrcdv".
+      10  EXRCDV-FUNC    PIC X(3)  VALUE "OPN".
+      PROCEDURE DIVISION.
+      MAIN.
+        PERFORM READ-CDV.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result).toHaveLength(1)
+    expect(result[0].table).toBe('exrcdv')
+    expect(result[0].operation).toBe('READ')
+  })
+
+  it('collects key fields using short candidate prefix in PERFORM context', () => {
+    // CDV-MACADDR is a key field — prefix in the MOVE is CDV (short form), not EXRCDV (full)
+    const cobol = `
+      10  EXRCDV-TABNAM  PIC X(6)  VALUE
+                         "exrcdv".
+      10  EXRCDV-FUNC    PIC X(3)  VALUE "OPN".
+      PROCEDURE DIVISION.
+      MAIN.
+        MOVE EXIRI-MACADDR TO CDV-MACADDR.
+        PERFORM READ-CDV.
+    `
+    const result = extractTuxTables(cobol)
+    expect(result[0].keyFields).toContain('cdv_macaddr')
+  })
 })
 
 describe('extractErrorEntries', () => {

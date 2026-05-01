@@ -171,6 +171,20 @@ export function extractTuxTables(cobolText) {
 
   if (prefixMap.size === 0) return []
 
+  // Build suffix lookup for abbreviated prefix names used in paragraph/perform conventions
+  // e.g., CDV → EXRCDV when paragraphs say READ-CDV but TABNAM declares EXRCDV-TABNAM
+  const suffixToPrefix = new Map()
+  for (const fullPrefix of prefixMap.keys()) {
+    for (let len = 3; len < fullPrefix.length; len++) {
+      const sfx = fullPrefix.slice(-len)
+      if (!suffixToPrefix.has(sfx)) {
+        suffixToPrefix.set(sfx, fullPrefix)
+      } else if (suffixToPrefix.get(sfx) !== fullPrefix) {
+        suffixToPrefix.set(sfx, null) // ambiguous — multiple prefixes share this suffix
+      }
+    }
+  }
+
   const tables = new Map()
 
   // Strategy 1: MOVE "OP" TO prefix-FUNC (keep as fallback for programs that have it)
@@ -189,6 +203,7 @@ export function extractTuxTables(cobolText) {
   const normLines = normalised.split('\n')
   const paraRe = /^\s*([A-Z][A-Z0-9-]+)\./i
 
+  // paraToTable: paraName → { tableName, prefix (full), candidatePrefix (may be short), op }
   const paraToTable = new Map()
   for (const line of normLines) {
     const pm = line.match(paraRe)
@@ -202,9 +217,45 @@ export function extractTuxTables(cobolText) {
       const verbPart = parts.slice(0, i).join('-')
       const op = paraVerbToOp(verbPart)
       if (op) {
-        paraToTable.set(paraName, { tableName: prefixMap.get(candidatePrefix), prefix: candidatePrefix, op })
+        paraToTable.set(paraName, { tableName: prefixMap.get(candidatePrefix), prefix: candidatePrefix, candidatePrefix, op })
       }
       break
+    }
+  }
+
+  // Strategy 2b: PERFORM targets with suffix matching — catches table accesses when paragraph
+  // definitions are truncated (e.g., OPEN-REC cutoff removes READ-CDV paragraph definition
+  // but PERFORM READ-CDV call sites are still present in the code).
+  // Suffix matching at i=1 handles abbreviated prefix names: READ-CDV → CDV → EXRCDV.
+  const performTargetRe = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/gi
+  while ((m = performTargetRe.exec(normalised)) !== null) {
+    const paraName = m[1].toUpperCase()
+    if (paraToTable.has(paraName)) continue
+    const parts = paraName.split('-')
+    if (parts.length < 2) continue
+
+    // Exact match (right-to-left, same as Strategy 2)
+    let matched = false
+    for (let i = parts.length - 1; i >= 1; i--) {
+      const cp = parts[i]
+      if (!prefixMap.has(cp)) continue
+      const op = paraVerbToOp(parts.slice(0, i).join('-'))
+      if (op) {
+        paraToTable.set(paraName, { tableName: prefixMap.get(cp), prefix: cp, candidatePrefix: cp, op })
+        matched = true
+      }
+      break
+    }
+    if (matched) continue
+
+    // Suffix match at position i=1: verb is parts[0], table identifier is parts[1]
+    const candidate = parts[1]
+    const fullPrefix = suffixToPrefix.get(candidate)
+    if (fullPrefix) {
+      const op = paraVerbToOp(parts[0])
+      if (op) {
+        paraToTable.set(paraName, { tableName: prefixMap.get(fullPrefix), prefix: fullPrefix, candidatePrefix: candidate, op })
+      }
     }
   }
 
@@ -225,17 +276,23 @@ export function extractTuxTables(cobolText) {
     const entry = paraToTable.get(paraName)
     if (!entry) continue
 
-    const { tableName, prefix } = entry
+    const { tableName, prefix, candidatePrefix } = entry
     if (!tables.has(tableName)) tables.set(tableName, { ops: new Set(), keyFields: new Set() })
 
-    const moveToRe = new RegExp(`\\bMOVE\\s+\\S+\\s+TO\\s+(${prefix}-[A-Z0-9-]+)`, 'i')
-    for (let j = Math.max(0, i - 15); j < i; j++) {
-      const mv = normLines[j].match(moveToRe)
-      if (!mv) continue
-      const fieldName = mv[1].toUpperCase()
-      const lastToken = fieldName.split('-').pop()
-      if (!INFRA_SUFFIXES.has(lastToken)) {
-        tables.get(tableName).keyFields.add(fieldName.replace(/-/g, '_').toLowerCase())
+    // Try both full prefix and candidate prefix (short form) for key field patterns
+    const prefixesToTry = [prefix]
+    if (candidatePrefix && candidatePrefix !== prefix) prefixesToTry.push(candidatePrefix)
+
+    for (const pfx of prefixesToTry) {
+      const moveToRe = new RegExp(`\\bMOVE\\s+\\S+\\s+TO\\s+(${pfx}-[A-Z0-9-]+)`, 'i')
+      for (let j = Math.max(0, i - 15); j < i; j++) {
+        const mv = normLines[j].match(moveToRe)
+        if (!mv) continue
+        const fieldName = mv[1].toUpperCase()
+        const lastToken = fieldName.split('-').pop()
+        if (!INFRA_SUFFIXES.has(lastToken)) {
+          tables.get(tableName).keyFields.add(fieldName.replace(/-/g, '_').toLowerCase())
+        }
       }
     }
   }
