@@ -196,6 +196,33 @@ Analysis discipline:
 - PRE-DISPATCH FUNCTIONS run before every mode — their logic applies to ALL entry points
 `
 
+export const CODE_GENERATION_PROMPT = (context) => `
+You are a COBOL-to-JavaScript expert. Convert the COBOL operation described below into a modern JavaScript async function.
+
+${context}
+
+Return ONLY valid JSON matching this schema exactly:
+{
+  "functionName": "camelCase function name derived from the operation name",
+  "code": "complete JavaScript async function — self-contained, no placeholders",
+  "notes": ["any assumption or decision worth explaining to a reviewer"]
+}
+
+Rules:
+- Derive ALL logic from the COBOL SOURCE PARAGRAPHS — read the actual code, do not infer from field or paragraph names
+- Implement every branch, condition, and error case exactly as coded — copy the logic, not a summary of it
+- Parameters: use camelCase names matching INPUT/OUTPUT PARAMETERS (EUR-EXEC-LGN-ID → eurExecLgnId)
+- WS CONSTANTS: use the exact values listed — never invent placeholder strings
+- DB reads: \`const row = await db.select(TABLE, { keyField: value })\`; use field names from DB TABLE SCHEMAS; handle not-found per the COBOL (error return, or default values — read the paragraph to determine which)
+- DB writes: \`await db.insert(TABLE, data)\` / \`await db.update(TABLE, data, { key })\`
+- External calls: \`await callProgram(NAME, inputObject)\` — destructure result
+- Error returns: \`return { error: 1500, field: 'FIELD-NAME' }\` — use codes from ERROR CATALOG
+- Boolean conditions: translate COBOL 'IF A = 0 AND B = 0' literally — AND stays AND, OR stays OR; do not simplify
+- Pre-dispatch paragraphs run first (listed above the entry point), then entry-point-specific logic
+- Do not add try/catch blocks that are not in the COBOL — only catch what the paragraph explicitly handles
+- Do not abbreviate or skip logic — the goal is a complete, runnable implementation
+`
+
 export const C_ANALYZE_ENTRY_POINT_PROMPT = (condition, businessName, context) => `
 You are a C expert analyzing one specific operation of a legacy CAPI service for TypeScript/JavaScript rewrite documentation.
 

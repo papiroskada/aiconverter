@@ -58,11 +58,14 @@
 **Direction linkage fields**: визначається по суфіксу імені —
 `{3 chars}{R|U}I-…` → `in`, `{3 chars}{R|U}O-…` → `out`, інакше `null`.
 
-**TUX tables — дві стратегії:**
-- Strategy 1: `MOVE "RD" TO {PREFIX}-FUNC`
-- Strategy 2: назва параграфа `{VERB}-{PREFIX}-...` (VLD, READ, INS, UPD, DEL = відповідні операції)
+**TUX tables — три стратегії:**
+- Strategy 1: `MOVE "RD" TO {PREFIX}-FUNC` — пряме присвоєння операції
+- Strategy 2a: назва параграфа `{VERB}-{PREFIX}-...` де VERB = VLD/READ/INS/UPD/DEL — операція з назви
+- Strategy 2b: ціль PERFORM — `PERFORM READ-CDV` → суфікс `CDV` шукається в `suffixToPrefix` map (побудований з TABNAM декларацій). Вирішує проблему truncation: якщо визначення параграфа обрізане `OPEN-REC.`, але PERFORM залишився — таблиця все одно знайдеться.
 
-Для полів ключа — сканує MOVE до PERFORM у вікні 15 рядків.
+Для полів ключа — сканує MOVE до PERFORM у вікні 15 рядків; пробує і повний (`EXRCDV-`), і короткий (`CDV-`) префікс.
+
+**`filterEntryPoints(entryPoints, evaluateDispatch)`** — фільтрує entry points після AI відповіді: якщо структурний аналіз знайшов EVALUATE dispatch, тільки ті entry points залишаються, чиї `paragraphNames` перетинаються з dispatch targets. Entry points типу `always` не фільтруються. Вирішує проблему copy-book параграфів (SCCGTERR тощо), які AI помилково виносить як окремі операції.
 
 ---
 
@@ -250,3 +253,91 @@ UNIQUE constraint: `(caller_program_id, callee_name)`.
 ### Що НЕ зберігається
 - Оригінальний (непрепроцесований) текст файлу — тільки препроцесований на диску.
 - Table catalog (збагачення колонок) — обчислюється на вимогу через `/table-catalog`, не зберігається.
+
+---
+
+## 8. Повторний аналіз
+
+**`reanalyze(programId)`** (`analysisService.js`):
+1. Очищає `structural_cache` → `NULL` в БД перед запуском.
+2. Читає файл з диску, запускає `runAnalysisCore`.
+3. Без очищення кешу — нові версії екстракторів не вступають в дію (дані беруться зі старого кешу).
+
+---
+
+## 9. Генерація коду
+
+**Endpoint:** `POST /api/programs/:id/generate`  
+**Body:** `{ "condition": "FUNC='RD'" }` — умова entry point (або відсутнє → перший entry point).  
+**Response:** `{ functionName, code, notes, paragraphsIncluded, contextTokenEstimate }`
+
+### Контекст для генерації (`codeGenerationService.js`)
+
+Формується з трьох джерел (без повного файлу, тільки релевантні частини):
+
+| Джерело | Що дає |
+|---------|--------|
+| `program_analysis` (БД) | `business_purpose`, `input_contract`, `output_contract`, `error_catalog`, `external_dependencies`, `entry_points[i]` (steps, sideEffects, errors, dbOperations) |
+| `programs.structural_cache` (БД) | `performGraph` + `preDispatchNames` для транзитивного розкриття PERFORM залежностей |
+| `program_chunks` (БД) | Тільки параграфи релевантного entry point (+ pre-dispatch + транзитивні PERFORM цілі) |
+| Файл на диску | `extractTuxTableSchemas` — схеми полів TUX буферів; `extractWsConstants` — VALUE-ініціалізовані WS константи |
+
+### `extractTuxTableSchemas(cobolText)`
+
+Витягує структуру запису для кожної TUX таблиці з WS секції. Патерн:
+- `EXRCDV-TABNAM VALUE "exrcdv"` → повний префікс `EXRCDV`, короткий `CDV` (останні 3 символи)
+- Шукає всі `CDV-*` поля з PIC типами
+- `CDV-KEY` / `CDV-DATA` — групи без PIC, ігноруються
+- Повертає `{ [tableName]: [{ name, camelName, pic, type }] }`
+
+Результат для `exrcdv`:
+```
+CDV-MACADDR (X(12), string)
+CDV-HOST-NM (X(15), string)
+CDV-UPD-AUTH-REQD (9(1), number)
+CDV-INSYNC-ACTV (9(1), number)
+...
+```
+
+### `extractWsConstants(cobolText)`
+
+Знаходить VALUE-ініціалізовані WS поля з рядковими літералами — бізнес-константи типу:
+```
+WS-PRS-MD-INFO PIC X(01) VALUE "1"
+```
+
+Виключає фігуративні константи (`SPACES`, `ZERO` тощо) і інфраструктурні суфікси (`TABNAM`, `FUNC`...).
+
+### Параграфи в контексті
+
+Той самий алгоритм що й для двокрокового аналізу:
+1. Беруться `paragraphNames` вибраного entry point.
+2. Додаються pre-dispatch параграфи.
+3. Транзитивно розкриваються всі PERFORM залежності через `resolveTransitive`.
+4. З `program_chunks` вибираються тільки ці параграфи (≈ 60–200 рядків для типового entry point замість повного файлу 5000+ рядків).
+
+### Промпт (`CODE_GENERATION_PROMPT`)
+
+Вимагає повну реалізацію без заглушок:
+- DB операції: `await db.select(TABLE, { keyField: value })`
+- Зовнішні виклики: `await callProgram(NAME, inputObj)`
+- Помилки: `return { error: 1500, field: 'FIELD-NAME' }`
+- 88-level умови → boolean перевірки
+- Порядок steps — дотриматись строго
+
+Повертає JSON: `{ functionName, code, notes }`.
+
+### Якість генерації (поточний стан PoC)
+
+**Добре:**
+- Правильні camelCase назви полів з точними COBOL PIC типами
+- Правильні WS константи (без плейсхолдерів)
+- ICF×CDV вкладений IF здебільшого коректний (`(icfAutoUpd === 0 || cdvInsyncActv === 0) ? 0 : 1`)
+
+**Відомі проблеми:**
+- Error 1508 (CDV not found) — AI генерує як hard error, хоча в COBOL це warning + defaults (`SET-OUT-LNK-NO-CDV` → INSYNC-ACTV=0, UPD-AUTH-REQD=1 → EXIT). Потребує точних steps.
+- AI іноді додає `catch → error: 9999` якого немає в COBOL — заборонено правилом промпту, але не завжди дотримується
+
+**Експеримент: steps vs. no steps**
+
+Прибрання `steps` з контексту дало гірший результат: AI вигадував зайві функції (`callService`, `logError`) і підтягував нерелевантні WS константи. Steps залишаються в контексті — вони зменшують noise і дають AI правильний порядок операцій. Покращені правила промпту (`CODE_GENERATION_PROMPT`) вимагають: логіку брати з COBOL параграфів, boolean умови переводити буквально, не додавати catch блоки яких немає в COBOL.

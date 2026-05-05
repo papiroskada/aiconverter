@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT, CODE_GENERATION_PROMPT } from '../prompts.js'
 
 export class ClaudeProvider extends BaseProvider {
   constructor(config = {}) {
@@ -31,5 +31,9 @@ export class ClaudeProvider extends BaseProvider {
       ? C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
       : ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
     return this.#callClaude(prompt, 4096, this.modelDetail, signal)
+  }
+
+  async generateCode(context, signal) {
+    return this.#callClaude(CODE_GENERATION_PROMPT(context), 8000, this.modelMain, signal)
   }
 }

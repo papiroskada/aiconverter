@@ -5,6 +5,7 @@ import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
+import { generateEntryPoint } from '../services/codeGenerationService.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 
 const router = Router()
@@ -111,6 +112,16 @@ router.post('/:id/analyze', async (req, res) => {
   try {
     await reanalyze(req.params.id, sseEmitters)
     res.json({ status: 'analyzing' })
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+// POST /api/programs/:id/generate
+router.post('/:id/generate', async (req, res) => {
+  try {
+    const result = await generateEntryPoint(req.params.id, req.body.condition ?? null)
+    res.json(result)
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }

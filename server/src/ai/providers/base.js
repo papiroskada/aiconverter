@@ -1,6 +1,7 @@
 export class BaseProvider {
   async extractBusinessAnalysis(context, signal) { throw new Error('Not implemented') }
   async analyzeEntryPoint(condition, businessName, context, signal) { throw new Error('Not implemented') }
+  async generateCode(context, signal) { throw new Error('Not implemented') }
 }
 
 export async function getProvider(config = {}) {

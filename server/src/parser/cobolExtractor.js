@@ -314,3 +314,100 @@ function paraVerbToOp(verbPart) {
     DEL: 'DELETE', DELETE: 'DELETE', RMV: 'DELETE', REMOVE: 'DELETE',
   }[firstToken]
 }
+
+function picToJsType(pic) {
+  if (!pic) return 'object'
+  if (/^X/i.test(pic)) return 'string'
+  if (/^[S9]/i.test(pic)) return 'number'
+  return 'string'
+}
+
+// Extracts VALUE-initialized WS fields that represent named business constants
+// (e.g., WS-PRS-MD-INFO VALUE "1"). Excludes figurative constants and infrastructure suffixes.
+export function extractWsConstants(cobolText) {
+  const FIGURATIVE = new Set(['SPACES', 'SPACE', 'ZEROES', 'ZEROS', 'ZERO',
+    'LOW-VALUES', 'HIGH-VALUES', 'LOW-VALUE', 'HIGH-VALUE', 'ALL', 'QUOTE', 'QUOTES'])
+  const INFRA_SUFFIXES = new Set(['TABNAM', 'FUNC', 'CURSOR', 'KEYNUM', 'LOCK',
+    'STATUS', 'SIZE', 'ORGZN'])
+
+  const upper = cobolText.toUpperCase()
+  const wsStart = upper.indexOf('WORKING-STORAGE SECTION')
+  if (wsStart === -1) return []
+  const stopPatterns = ['PROCEDURE DIVISION', 'LINKAGE SECTION', 'FILE SECTION']
+  let wsEnd = upper.length
+  for (const p of stopPatterns) {
+    const idx = upper.indexOf(p, wsStart + 22)
+    if (idx !== -1 && idx < wsEnd) wsEnd = idx
+  }
+  const wsText = cobolText.slice(wsStart, wsEnd)
+
+  const result = []
+  // Match: level FIELD-NAME PIC type VALUE "literal"
+  const re = /^\s*\d{1,2}\s+([A-Z][A-Z0-9-]+)\s+PIC\s+\S+\s+VALUE\s+["']([^"']+)["']/gim
+  let m
+  while ((m = re.exec(wsText)) !== null) {
+    const name = m[1].toUpperCase()
+    const value = m[2]
+    if (FIGURATIVE.has(value.toUpperCase())) continue
+    const lastToken = name.split('-').pop()
+    if (INFRA_SUFFIXES.has(lastToken)) continue
+    const camelName = name.toLowerCase().replace(/-+(.)/g, (_, c) => c.toUpperCase())
+    result.push({ name, value, camelName })
+  }
+  return result
+}
+
+// Extracts field schemas for TUX middleware tables from the COBOL WS section.
+// For each table declared via {PREFIX}-TABNAM, finds the corresponding {SHORT}-RECORD
+// group (where SHORT = last 3 chars of PREFIX) and returns its fields with PIC types.
+export function extractTuxTableSchemas(cobolText) {
+  const INFRA_GROUP_SUFFIXES = new Set(['KEY', 'DATA', 'MSG', 'PARAM', 'TABNAM', 'FUNC',
+    'CURSOR', 'KEYNUM', 'LOCK', 'STATUS', 'REC', 'AREA', 'ORGZN'])
+
+  // Build fullPrefix → tableName map (same logic as extractTuxTables)
+  const prefixMap = new Map()
+  const tabnamRe = /(\w+)-TABNAM\b[^\n]*?"([a-zA-Z][a-zA-Z0-9]{0,7})"/gi
+  let m
+  while ((m = tabnamRe.exec(cobolText)) !== null) prefixMap.set(m[1].toUpperCase(), m[2].toLowerCase())
+  const tabnamSplitRe = /(\w+)-TABNAM\b[^\n]*\n[^\n]*?"([a-zA-Z][a-zA-Z0-9]{0,7})"/gi
+  while ((m = tabnamSplitRe.exec(cobolText)) !== null) {
+    if (!prefixMap.has(m[1].toUpperCase())) prefixMap.set(m[1].toUpperCase(), m[2].toLowerCase())
+  }
+  if (prefixMap.size === 0) return {}
+
+  // Short prefix (last 3 chars of full prefix) → table name
+  // EXRCDV → CDV, EXRGPP → GPP, EXRICF → ICF, EXREUR → EUR
+  const shortPrefixMap = new Map()
+  for (const [fullPfx, tbl] of prefixMap) {
+    const short = fullPfx.length > 3 ? fullPfx.slice(-3) : fullPfx
+    if (!shortPrefixMap.has(short)) shortPrefixMap.set(short, tbl)
+  }
+
+  const schemas = {}
+
+  // Scan every PIC-bearing field declaration in the file
+  const fieldRe = /^\s*\d{1,2}\s+([A-Z][A-Z0-9-]+)\s+PIC\s+(\S+)/gim
+  while ((m = fieldRe.exec(cobolText)) !== null) {
+    const name = m[1].toUpperCase()
+    const parts = name.split('-')
+    if (parts.length < 2) continue
+
+    const short = parts[0]
+    const tableName = shortPrefixMap.get(short)
+    if (!tableName) continue
+
+    // Skip infrastructure group names used as group levels without PIC (these DO have PIC so skip by suffix)
+    const lastToken = parts[parts.length - 1]
+    if (INFRA_GROUP_SUFFIXES.has(lastToken)) continue
+
+    if (!schemas[tableName]) schemas[tableName] = []
+    schemas[tableName].push({
+      name,
+      camelName: name.toLowerCase().replace(/-+(.)/g, (_, c) => c.toUpperCase()),
+      pic: m[2].replace(/\.$/, ''),
+      type: picToJsType(m[2]),
+    })
+  }
+
+  return schemas
+}
