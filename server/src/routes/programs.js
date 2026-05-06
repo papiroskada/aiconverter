@@ -2,17 +2,53 @@ import { Router } from 'express'
 import multer from 'multer'
 import { getAllPrograms, findProgramById } from '../models/programs.js'
 import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
-import { getAnalysisByProgramId, updateFlag } from '../models/programAnalysis.js'
+import { getAnalysisByProgramId, updateFlag, patchEntryPoints } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPoint } from '../services/codeGenerationService.js'
+import { generateEntryPoint, generateProgram, generateDbTypes, checkConsistency, generateApplication } from '../services/codeGenerationService.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage() })
 
+import pool from '../db/client.js'
+
 // SSE emitter registry: programId → Set of response objects
 const sseEmitters = new Map()
+
+// POST /api/programs/db-types
+router.post('/db-types', async (req, res, next) => {
+  try {
+    const { programIds } = req.body
+    if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
+    const result = await generateDbTypes(programIds)
+    res.json(result)
+  } catch (err) { next(err) }
+})
+
+// POST /api/programs/consistency-check
+router.post('/consistency-check', async (req, res, next) => {
+  try {
+    const { programIds } = req.body
+    if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
+    const warnings = await checkConsistency(programIds)
+    res.json({ warnings })
+  } catch (err) { next(err) }
+})
+
+// POST /api/programs/application/:appId/generate
+router.post('/application/:appId/generate', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT program_id FROM application_programs WHERE application_id = $1',
+      [req.params.appId]
+    )
+    const programIds = rows.map(r => r.program_id)
+    if (!programIds.length) return res.status(422).json({ error: 'No programs in application' })
+    const result = await generateApplication(programIds)
+    res.json(result)
+  } catch (err) { next(err) }
+})
 
 // GET /api/programs
 router.get('/', async (req, res, next) => {
@@ -127,6 +163,14 @@ router.post('/:id/generate', async (req, res) => {
   }
 })
 
+// POST /api/programs/:id/generate-program
+router.post('/:id/generate-program', async (req, res, next) => {
+  try {
+    const result = await generateProgram(req.params.id)
+    res.json(result)
+  } catch (err) { next(err) }
+})
+
 // DELETE /api/programs/:id
 router.delete('/:id', async (req, res) => {
   try {
@@ -157,6 +201,18 @@ router.patch('/:id/flags', async (req, res) => {
     }
     const flags = await updateFlag(req.params.id, condition, flag ?? null)
     res.json(flags)
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/programs/:id/entry-points
+router.patch('/:id/entry-points', async (req, res) => {
+  try {
+    const { entry_points } = req.body
+    if (!Array.isArray(entry_points)) return res.status(400).json({ error: 'entry_points must be array' })
+    const updated = await patchEntryPoints(req.params.id, entry_points)
+    res.json({ entry_points: updated })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }

@@ -2,11 +2,14 @@ import { readFileSync } from 'fs'
 import { findProgramById } from '../models/programs.js'
 import { getAnalysisByProgramId } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
+import { getCallsFromProgram } from '../models/programCalls.js'
 import { getSettings } from '../models/settings.js'
 import { getProvider } from '../ai/providers/base.js'
 import { deserializePerformGraph } from '../ai/orchestrator.js'
 import { resolveTransitive } from '../parser/cobolParser.js'
 import { extractTuxTableSchemas, extractWsConstants } from '../parser/cobolExtractor.js'
+
+// ─── helpers ────────────────────────────────────────────────────────────────
 
 function formatParams(contractJson) {
   if (!contractJson) return '  (none)'
@@ -16,13 +19,27 @@ function formatParams(contractJson) {
   return params.map(p => `  ${p.name} (${p.type}${p.direction ? `, ${p.direction}` : ''}) — ${p.description || p.cobolName}`).join('\n')
 }
 
+function formatNotFoundAction(nfa) {
+  if (!nfa || nfa === 'n/a') return null
+  if (typeof nfa === 'string') return nfa
+  if (nfa.type === 'error') return `error ${nfa.code}`
+  if (nfa.type === 'defaults') {
+    const fields = nfa.fields ? Object.entries(nfa.fields).map(([k, v]) => `${k}=${v}`).join(', ') : ''
+    return `set defaults${fields ? ` (${fields})` : ''}${nfa.logError ? ', log error' : ''} and continue`
+  }
+  if (nfa.type === 'continue') return 'continue (absence acceptable)'
+  if (nfa.type === 'skip') return 'skip (conditional)'
+  return null
+}
+
 function formatTableSchemas(dbTables, tableSchemas) {
   const usedTables = (dbTables ?? []).filter(t => !t.ai_hallucinated)
   if (!usedTables.length) return '  (none)'
 
   return usedTables.map(t => {
     const keys = t.keyFields?.length ? `; key: ${t.keyFields.join(', ')}` : ''
-    const nf = t.notFoundAction ? `; if not found: ${t.notFoundAction}` : ''
+    const nfText = formatNotFoundAction(t.notFoundAction)
+    const nf = nfText ? `; if not found: ${nfText}` : ''
     const header = `  ${t.table} (${t.operation}${keys}${nf})`
 
     const fields = tableSchemas[t.table]
@@ -38,7 +55,33 @@ function formatTableSchemas(dbTables, tableSchemas) {
   }).join('\n\n')
 }
 
-function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants) {
+function getPatterns(settings) {
+  return {
+    language:        settings.code_language          ?? 'typescript',
+    dbRead:          settings.code_db_read           ?? "await db.select('{table}', { {key}: {value} })",
+    dbWrite:         settings.code_db_write          ?? "await db.insert('{table}', data) / await db.update('{table}', data, { {key} })",
+    errorConvention: settings.code_error_convention  ?? "return { error: {code}, field: '{field}' }",
+    externalCall:    settings.code_external_call     ?? "await callProgram('{name}', input)",
+  }
+}
+
+function selectRelevantChunks(paragraphChunks, paragraphNames, performGraph, preDispatchNames) {
+  const allNames = new Set([...preDispatchNames, ...paragraphNames])
+  for (const name of [...allNames]) {
+    for (const dep of resolveTransitive(name, performGraph)) allNames.add(dep)
+  }
+  return paragraphChunks.filter(c => allNames.has(c.chunk_name))
+}
+
+function sourceSection(relevantChunks, settings) {
+  if (settings.code_source_mode === 'logic_only') return ''
+  const text = relevantChunks.map(c => `[${c.chunk_name}]\n${c.cobol_text}`).join('\n\n') || '(none)'
+  return `\nCOBOL SOURCE PARAGRAPHS:\n${text}`
+}
+
+// ─── single entry point context ─────────────────────────────────────────────
+
+function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings) {
   const ep = analysis._selectedEntryPoint
 
   const errorList = (analysis.error_catalog ?? [])
@@ -50,7 +93,6 @@ function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, ws
     .join('\n') || '  (none)'
 
   const preDispatch = (analysis.pre_dispatch ?? []).join(', ') || '(none)'
-
   const steps = (ep.steps ?? []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  (none)'
   const sideEffects = (ep.sideEffects ?? []).map(s => `  - ${s}`).join('\n') || '  (none)'
   const epErrors = (ep.errors ?? []).map(s => `  - ${s}`).join('\n') || '  (none)'
@@ -58,75 +100,104 @@ function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, ws
   const epDbTables = ep.dbOperations?.length ? ep.dbOperations : analysis.db_tables ?? []
   const epDb = formatTableSchemas(epDbTables, tableSchemas)
 
-  // Only include WS constants that are actually referenced in the relevant paragraph source
   const paragraphText = relevantChunks.map(c => c.cobol_text).join('\n').toUpperCase()
   const referencedConstants = (wsConstants ?? []).filter(c => paragraphText.includes(c.name))
   const wsConstantsList = referencedConstants.length
     ? referencedConstants.map(c => `  ${c.name} = "${c.value}" (js: ${c.camelName})`).join('\n')
     : '  (none)'
 
-  const paragraphSource = relevantChunks
-    .map(c => `[${c.chunk_name}]\n${c.cobol_text}`)
-    .join('\n\n') || '(none)'
+  const patterns = getPatterns(settings)
 
   return [
     `PROGRAM: ${program.name}`,
     `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
     `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
     `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
-    `\nWS CONSTANTS (exact VALUE-initialized fields — use these literal values, no placeholders):\n${wsConstantsList}`,
+    `\nTARGET PATTERNS:`,
+    `  DB read:       ${patterns.dbRead}`,
+    `  DB write:      ${patterns.dbWrite}`,
+    `  Error:         ${patterns.errorConvention}`,
+    `  External call: ${patterns.externalCall}`,
+    `\nWS CONSTANTS (exact VALUE-initialized fields):\n${wsConstantsList}`,
     `\nERROR CATALOG:\n${errorList}`,
-    `\nDB TABLE SCHEMAS (exact COBOL field names — use for db operations and result field access):\n${epDb}`,
+    `\nDB TABLE SCHEMAS:\n${epDb}`,
     `\nEXTERNAL DEPENDENCIES:\n${depList}`,
     `\nPRE-DISPATCH PARAGRAPHS (run before every operation): ${preDispatch}`,
     `\nENTRY POINT: ${ep.businessName} (when ${ep.condition})`,
     `STEPS:\n${steps}`,
     `SIDE EFFECTS:\n${sideEffects}`,
     `ERRORS:\n${epErrors}`,
-    `\nCOBOL SOURCE PARAGRAPHS:\n${paragraphSource}`,
-  ].join('\n')
+    sourceSection(relevantChunks, settings),
+  ].filter(s => s !== '').join('\n')
 }
 
-function selectRelevantChunks(paragraphChunks, paragraphNames, performGraph, preDispatchNames) {
-  const allNames = new Set([...preDispatchNames, ...paragraphNames])
-  for (const name of [...allNames]) {
-    for (const dep of resolveTransitive(name, performGraph)) {
-      allNames.add(dep)
-    }
-  }
-  return paragraphChunks.filter(c => allNames.has(c.chunk_name))
+// ─── whole program context ───────────────────────────────────────────────────
+
+function buildProgramContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings) {
+  const errorList = (analysis.error_catalog ?? [])
+    .map(e => `  ${e.code}${e.businessMeaning ? ` — ${e.businessMeaning}` : ''}${e.systemAction ? `; ${e.systemAction}` : ''}`)
+    .join('\n') || '  (none)'
+
+  const depList = (analysis.external_dependencies ?? [])
+    .map(d => `  ${d.program}: ${d.purpose}; in: ${d.dataIn ?? '?'}; out: ${d.dataOut ?? '?'}`)
+    .join('\n') || '  (none)'
+
+  const allDbTables = (analysis.db_tables ?? []).filter(t => !t.ai_hallucinated)
+  const dbSection = formatTableSchemas(allDbTables, tableSchemas)
+
+  const paragraphText = relevantChunks.map(c => c.cobol_text).join('\n').toUpperCase()
+  const referencedConstants = (wsConstants ?? []).filter(c => paragraphText.includes(c.name))
+  const wsConstantsList = referencedConstants.length
+    ? referencedConstants.map(c => `  ${c.name} = "${c.value}" (js: ${c.camelName})`).join('\n')
+    : '  (none)'
+
+  const entryPointsSection = (analysis.entry_points ?? []).map(ep => {
+    const steps = (ep.steps ?? []).map((s, i) => `    ${i + 1}. ${s}`).join('\n') || '    (none)'
+    const sideEffects = (ep.sideEffects ?? []).map(s => `    - ${s}`).join('\n') || '    (none)'
+    const epErrors = (ep.errors ?? []).map(s => `    - ${s}`).join('\n') || '    (none)'
+    const epDb = formatTableSchemas(ep.dbOperations?.length ? ep.dbOperations : [], tableSchemas)
+    return [
+      `  WHEN ${ep.condition} → ${ep.businessName}`,
+      `  Steps:\n${steps}`,
+      `  Side Effects:\n${sideEffects}`,
+      `  Errors:\n${epErrors}`,
+      `  DB Operations:\n${epDb}`,
+    ].join('\n')
+  }).join('\n\n')
+
+  return [
+    `PROGRAM: ${program.name}`,
+    `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
+    `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
+    `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
+    `\nWS CONSTANTS:\n${wsConstantsList}`,
+    `\nERROR CATALOG:\n${errorList}`,
+    `\nDB TABLE SCHEMAS:\n${dbSection}`,
+    `\nEXTERNAL DEPENDENCIES:\n${depList}`,
+    `\nPRE-DISPATCH: ${(analysis.pre_dispatch ?? []).join(', ') || '(none)'}`,
+    `\nENTRY POINTS:\n${entryPointsSection}`,
+    sourceSection(relevantChunks, settings),
+  ].filter(s => s !== '').join('\n')
 }
 
-export async function generateEntryPoint(programId, condition) {
-  const [program, analysis, allChunks, settings] = await Promise.all([
+// ─── load program data helper ────────────────────────────────────────────────
+
+async function loadProgramData(programId) {
+  const [program, analysis, allChunks] = await Promise.all([
     findProgramById(programId),
     getAnalysisByProgramId(programId),
     getChunksByProgramId(programId),
-    getSettings(),
   ])
-
   if (!program) throw Object.assign(new Error('Not found'), { status: 404 })
   if (!analysis) throw Object.assign(new Error('Program has no analysis'), { status: 422 })
 
-  const entryPoints = analysis.entry_points ?? []
-  const ep = condition
-    ? entryPoints.find(e => e.condition === condition)
-    : entryPoints[0]
-  if (!ep) throw Object.assign(new Error(`Entry point not found: ${condition}`), { status: 404 })
-
-  const paragraphChunks = allChunks.filter(c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph')
   const cache = program.structural_cache
   const performGraph = cache?.performGraph ? deserializePerformGraph(cache.performGraph) : new Map()
   const preDispatchNames = cache?.preDispatchNames ?? []
-
-  const relevantChunks = selectRelevantChunks(
-    paragraphChunks,
-    ep.paragraphNames ?? [],
-    performGraph,
-    preDispatchNames
+  const paragraphChunks = allChunks.filter(c =>
+    c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph'
   )
 
-  // Extract field schemas and WS constants from COBOL source
   let tableSchemas = {}
   let wsConstants = []
   if (program.file_path) {
@@ -134,14 +205,29 @@ export async function generateEntryPoint(programId, condition) {
       const cobolText = readFileSync(program.file_path, 'utf8')
       tableSchemas = extractTuxTableSchemas(cobolText)
       wsConstants = extractWsConstants(cobolText)
-    } catch {
-      // non-fatal: generation continues without schema detail
-    }
+    } catch { /* non-fatal */ }
   }
 
-  analysis._selectedEntryPoint = ep
-  const context = buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants)
+  return { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants }
+}
 
+// ─── public: single entry point ─────────────────────────────────────────────
+
+export async function generateEntryPoint(programId, condition) {
+  const settings = await getSettings()
+  const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
+    await loadProgramData(programId)
+
+  const entryPoints = analysis.entry_points ?? []
+  const ep = condition ? entryPoints.find(e => e.condition === condition) : entryPoints[0]
+  if (!ep) throw Object.assign(new Error(`Entry point not found: ${condition}`), { status: 404 })
+
+  const relevantChunks = selectRelevantChunks(
+    paragraphChunks, ep.paragraphNames ?? [], performGraph, preDispatchNames
+  )
+
+  analysis._selectedEntryPoint = ep
+  const context = buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
   const provider = await getProvider(settings)
   const result = await provider.generateCode(context)
 
@@ -152,4 +238,170 @@ export async function generateEntryPoint(programId, condition) {
     contextTokenEstimate: Math.ceil(context.length / 4),
     ...result,
   }
+}
+
+// ─── public: whole program ───────────────────────────────────────────────────
+
+export async function generateProgram(programId) {
+  const settings = await getSettings()
+  const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
+    await loadProgramData(programId)
+
+  const entryPoints = analysis.entry_points ?? []
+  if (!entryPoints.length) throw Object.assign(new Error('No entry points in analysis'), { status: 422 })
+
+  const allParagraphNames = [...new Set(entryPoints.flatMap(ep => ep.paragraphNames ?? []))]
+  const relevantChunks = selectRelevantChunks(
+    paragraphChunks, allParagraphNames, performGraph, preDispatchNames
+  )
+
+  const context = buildProgramContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
+  const patterns = getPatterns(settings)
+  const provider = await getProvider(settings)
+  const result = await provider.generateProgram(context, patterns)
+
+  return {
+    programName: program.name,
+    entryPoints: entryPoints.map(ep => ({ condition: ep.condition, businessName: ep.businessName })),
+    paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
+    contextTokenEstimate: Math.ceil(context.length / 4),
+    ...result,
+  }
+}
+
+// ─── public: DB types (deterministic, no AI) ─────────────────────────────────
+
+export async function generateDbTypes(programIds) {
+  const programs = await Promise.all(programIds.map(findProgramById))
+
+  const allSchemas = {}
+  for (const program of programs.filter(Boolean)) {
+    if (!program.file_path) continue
+    try {
+      const cobolText = readFileSync(program.file_path, 'utf8')
+      Object.assign(allSchemas, extractTuxTableSchemas(cobolText))
+    } catch { /* non-fatal */ }
+  }
+
+  if (!Object.keys(allSchemas).length) return { code: '// No DB schemas found\n', tables: [] }
+
+  const toPascal = s => s.replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/(^|_)([a-z\d])/g, (_, __, c) => c.toUpperCase())
+
+  const interfaces = Object.entries(allSchemas).map(([table, fields]) => {
+    const name = toPascal(table) + 'Row'
+    const fieldLines = fields.map(f => `  ${f.camelName}: ${f.type === 'number' ? 'number' : 'string'}`)
+    return `export interface ${name} {\n${fieldLines.join('\n')}\n}`
+  })
+
+  return {
+    code: `// Auto-generated DB row types — do not edit manually\n\n${interfaces.join('\n\n')}\n`,
+    tables: Object.keys(allSchemas),
+  }
+}
+
+// ─── public: pre-generation consistency check ────────────────────────────────
+
+export async function checkConsistency(programIds) {
+  const [programs, analyses] = await Promise.all([
+    Promise.all(programIds.map(findProgramById)),
+    Promise.all(programIds.map(getAnalysisByProgramId)),
+  ])
+
+  const byName = new Map()
+  programs.forEach((p, i) => { if (p && analyses[i]) byName.set(p.name, analyses[i]) })
+
+  const warnings = []
+  for (let i = 0; i < programs.length; i++) {
+    const program = programs[i]
+    const analysis = analyses[i]
+    if (!program || !analysis) continue
+
+    for (const dep of (analysis.external_dependencies ?? [])) {
+      const targetAnalysis = byName.get(dep.program)
+      if (!targetAnalysis) continue
+
+      let inputContract = []
+      try { inputContract = JSON.parse(targetAnalysis.input_contract ?? '[]') } catch { continue }
+      const inputNames = new Set(inputContract.map(p => p.cobolName?.toUpperCase()).filter(Boolean))
+
+      const mentionedFields = (dep.dataIn ?? '').match(/\b[A-Z][A-Z0-9]{1,}-[A-Z0-9-]+/g) ?? []
+      const mismatches = mentionedFields.filter(f => !inputNames.has(f))
+
+      if (mismatches.length) {
+        warnings.push({
+          caller: program.name,
+          callee: dep.program,
+          issue: `Fields in dataIn not found in ${dep.program} input_contract: ${mismatches.join(', ')}`,
+        })
+      }
+    }
+  }
+
+  return warnings
+}
+
+// ─── public: topological application generation ──────────────────────────────
+
+async function buildGenerationOrder(programIds) {
+  const idSet = new Set(programIds.map(String))
+
+  const callsMap = new Map()
+  await Promise.all(programIds.map(async id => {
+    const calls = await getCallsFromProgram(id)
+    callsMap.set(String(id), calls
+      .filter(c => c.callee_program_id && idSet.has(String(c.callee_program_id)))
+      .map(c => String(c.callee_program_id))
+    )
+  }))
+
+  // Kahn's algorithm — листові програми (нема вихідних залежностей) йдуть першими
+  const inDegree = new Map(programIds.map(id => [String(id), 0]))
+  for (const [callerId, deps] of callsMap) {
+    for (const dep of deps) {
+      // dep залежить від callerId — callerId має бути готовий раніше
+      // inDegree рахує скільки програм має бути згенеровано до поточної
+      inDegree.set(callerId, (inDegree.get(callerId) ?? 0) + 0) // caller не блокується
+    }
+  }
+  // Переосмислення: A викликає B → B генерується першою (leaf first)
+  // inDegree[id] = кількість програм що викликають id (id потрібна раніше)
+  const degree = new Map(programIds.map(id => [String(id), 0]))
+  for (const [, deps] of callsMap) {
+    for (const dep of deps) degree.set(dep, (degree.get(dep) ?? 0) + 1)
+  }
+
+  const queue = [...degree.entries()].filter(([, d]) => d === 0).map(([id]) => id)
+  const order = []
+  while (queue.length) {
+    const id = queue.shift()
+    order.push(id)
+    for (const [caller, deps] of callsMap) {
+      if (deps.includes(id)) {
+        const newDeg = (degree.get(caller) ?? 1) - 1
+        degree.set(caller, newDeg)
+        if (newDeg === 0) queue.push(caller)
+      }
+    }
+  }
+
+  // Додати решту (цикли або відокремлені програми)
+  const remaining = programIds.map(String).filter(id => !order.includes(id))
+  return [...order, ...remaining]
+}
+
+export async function generateApplication(programIds) {
+  const order = await buildGenerationOrder(programIds)
+  const results = []
+
+  for (const programId of order) {
+    try {
+      const result = await generateProgram(programId)
+      results.push({ programId, status: 'ok', ...result })
+    } catch (err) {
+      results.push({ programId, status: 'error', error: err.message })
+    }
+  }
+
+  return { order, results }
 }

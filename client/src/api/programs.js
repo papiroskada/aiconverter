@@ -46,6 +46,16 @@ export async function cancelAnalysis(id) {
   return res.json()
 }
 
+export async function patchEntryPoints(id, entryPoints) {
+  const res = await fetch(`${BASE}/${id}/entry-points`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entry_points: entryPoints }),
+  })
+  if (!res.ok) throw new Error('Failed to save entry points')
+  return res.json()
+}
+
 export async function patchFlags(id, condition, flag) {
   const res = await fetch(`${BASE}/${id}/flags`, {
     method: 'PATCH',

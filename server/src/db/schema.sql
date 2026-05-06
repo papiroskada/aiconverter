@@ -135,3 +135,12 @@ CREATE TABLE IF NOT EXISTS program_calls (
   created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (caller_program_id, callee_name)
 );
+
+-- Code generation target patterns and source mode
+ALTER TABLE settings
+  ADD COLUMN IF NOT EXISTS code_db_read           TEXT,
+  ADD COLUMN IF NOT EXISTS code_db_write          TEXT,
+  ADD COLUMN IF NOT EXISTS code_error_convention  TEXT,
+  ADD COLUMN IF NOT EXISTS code_external_call     TEXT,
+  ADD COLUMN IF NOT EXISTS code_language          TEXT NOT NULL DEFAULT 'typescript',
+  ADD COLUMN IF NOT EXISTS code_source_mode       TEXT NOT NULL DEFAULT 'with_source';

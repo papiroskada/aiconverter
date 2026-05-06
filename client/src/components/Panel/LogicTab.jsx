@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { patchFlags } from '../../api/programs.js'
+import { useState, useEffect } from 'react'
+import { patchFlags, patchEntryPoints } from '../../api/programs.js'
 
 const sectionStyle = { marginBottom: 20 }
 const labelStyle = { fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 8 }
@@ -17,6 +17,59 @@ function opColor(op = '') {
   return '#f87171'
 }
 
+function stepIcon(text = '') {
+  if (/SELECT|INSERT|UPDATE|DELETE|READ|SGE|RDN|UPD|DEL|INL/i.test(text)) return { icon: '⬡', color: '#60a5fa' }
+  if (/if not found|not found|returns? error|error \d{4}|return.*\d{4}/i.test(text)) return { icon: '⤷', color: '#f59e0b' }
+  if (/validates?|checks?|ensures?|verifies?|is (not )?spaces?|is (not )?zero/i.test(text)) return { icon: '✓', color: '#4ade80' }
+  return { icon: '·', color: '#475569' }
+}
+
+function enrichStepText(text, catalog) {
+  if (!catalog?.size) return text
+  const parts = text.split(/(\berror\s+\d+|\breturns?\s+\d{4}|\b\d{4}\b)/gi)
+  return parts.map((part, i) => {
+    const codeMatch = part.match(/\d{4,}/)
+    if (codeMatch) {
+      const entry = catalog.get(codeMatch[0])
+      if (entry) {
+        return (
+          <span key={i} title={entry.businessMeaning ?? ''} style={{
+            background: '#3b0f0f', color: '#f87171', borderRadius: 3,
+            padding: '0 4px', fontFamily: 'monospace', fontSize: 11,
+            cursor: 'help', borderBottom: '1px dashed #f87171',
+          }}>
+            {part}
+          </span>
+        )
+      }
+    }
+    return part
+  })
+}
+
+function NotFoundBadge({ nfa }) {
+  if (!nfa || nfa === 'n/a') return null
+  if (typeof nfa === 'string') {
+    return <span style={{ color: '#f59e0b', marginLeft: 'auto', fontSize: 10 }}>→ {nfa}</span>
+  }
+  if (nfa.type === 'skip') return null
+  if (nfa.type === 'error') {
+    return <span style={{ color: '#f87171', marginLeft: 'auto', fontSize: 10 }}>→ error {nfa.code}</span>
+  }
+  if (nfa.type === 'defaults') {
+    const fields = nfa.fields ? Object.entries(nfa.fields).map(([k, v]) => `${k}=${v}`).join(', ') : ''
+    return (
+      <span style={{ color: '#f59e0b', marginLeft: 'auto', fontSize: 10 }}>
+        → defaults{fields ? ` (${fields})` : ''}{nfa.logError ? ' ⚡log' : ''}
+      </span>
+    )
+  }
+  if (nfa.type === 'continue') {
+    return <span style={{ color: '#64748b', marginLeft: 'auto', fontSize: 10 }}>→ continue</span>
+  }
+  return null
+}
+
 function DbOpRow({ op }) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 0', fontSize: 11 }}>
@@ -25,9 +78,7 @@ function DbOpRow({ op }) {
       {op.keyFields?.length > 0 && (
         <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>key: {op.keyFields.join(', ')}</span>
       )}
-      {op.notFoundAction && op.notFoundAction !== 'n/a' && (
-        <span style={{ color: '#f59e0b', marginLeft: 'auto', fontSize: 10 }}>→ {op.notFoundAction}</span>
-      )}
+      <NotFoundBadge nfa={op.notFoundAction} />
     </div>
   )
 }
@@ -57,7 +108,7 @@ function FlagButton({ condition, currentFlag, programId, onFlagsChange }) {
   return (
     <div style={{ position: 'relative', marginLeft: 'auto' }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
         disabled={saving}
         style={{
           background: currentFlag ? `${FLAG_COLORS[currentFlag]}22` : '#1e293b',
@@ -91,7 +142,46 @@ export default function LogicTab({ analysis, programId, onFlagsChange }) {
   const preDispatch  = analysis?.pre_dispatch   ?? []
   const flags        = analysis?.flags          ?? {}
 
-  if (!preDispatch.length && !entryPoints.length && !errorCatalog.length) {
+  const [openEPs, setOpenEPs]   = useState(() => new Set(entryPoints.length === 1 ? [0] : []))
+  const [localEPs, setLocalEPs] = useState(entryPoints)
+  const [editing, setEditing]   = useState(null) // { epIndex, stepIndex }
+  const [editText, setEditText] = useState('')
+  const [saving, setSaving]     = useState(false)
+
+  useEffect(() => { setLocalEPs(entryPoints) }, [analysis])
+
+  const catalogMap = new Map((errorCatalog).map(e => [String(e.code), e]))
+
+  function toggleEP(i) {
+    setOpenEPs(prev => {
+      const next = new Set(prev)
+      next.has(i) ? next.delete(i) : next.add(i)
+      return next
+    })
+  }
+
+  function startEdit(epIndex, stepIndex, text) {
+    setEditing({ epIndex, stepIndex })
+    setEditText(text)
+  }
+
+  async function saveStep(epIndex, stepIndex) {
+    const updated = localEPs.map((ep, i) =>
+      i !== epIndex ? ep : { ...ep, steps: ep.steps.map((s, j) => j === stepIndex ? editText : s) }
+    )
+    setLocalEPs(updated)
+    setEditing(null)
+    setSaving(true)
+    try {
+      await patchEntryPoints(programId, updated)
+    } catch (e) {
+      console.error('Step save failed', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!preDispatch.length && !localEPs.length && !errorCatalog.length) {
     return <p style={{ color: '#64748b', margin: 0 }}>No business logic extracted yet.</p>
   }
 
@@ -110,63 +200,147 @@ export default function LogicTab({ analysis, programId, onFlagsChange }) {
         </div>
       )}
 
-      {entryPoints.length > 0 && (
+      {localEPs.length > 0 && (
         <div style={sectionStyle}>
-          <label style={labelStyle}>Entry Points</label>
-          {entryPoints.map((ep, i) => {
-            const epFlag = flags[ep.condition]
+          <label style={labelStyle}>
+            Entry Points
+            {saving && <span style={{ color: '#475569', fontWeight: 400, marginLeft: 8 }}>saving…</span>}
+          </label>
+          {localEPs.map((ep, i) => {
+            const epFlag  = flags[ep.condition]
+            const isOpen  = openEPs.has(i)
+            const summary = [
+              ep.steps?.length       ? `${ep.steps.length} steps`       : null,
+              ep.dbOperations?.length ? `${ep.dbOperations.length} tables` : null,
+              ep.errors?.length      ? `${ep.errors.length} errors`      : null,
+            ].filter(Boolean).join(' · ')
+
             return (
               <div key={i} style={{ ...cardStyle, borderLeft: epFlag ? `3px solid ${FLAG_COLORS[epFlag]}` : '3px solid transparent' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+
+                {/* Header — завжди видимий */}
+                <div
+                  onClick={() => toggleEP(i)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 8 : 0, cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <span style={{ color: '#475569', fontSize: 10, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
                   <div style={tagStyle}>{ep.condition}</div>
                   <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{ep.businessName}</div>
+                  {!isOpen && summary && (
+                    <span style={{ color: '#475569', fontSize: 11 }}>{summary}</span>
+                  )}
                   <FlagButton condition={ep.condition} currentFlag={epFlag} programId={programId} onFlagsChange={onFlagsChange} />
                 </div>
 
-                {ep.steps?.length > 0 && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={subLabelStyle}>Steps</div>
-                    {ep.steps.map((s, j) => (
-                      <div key={j} style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
-                        <span style={{ color: '#475569', fontSize: 11, flexShrink: 0 }}>{j + 1}.</span>
-                        <span style={{ color: '#cbd5e1', fontSize: 12 }}>{s}</span>
+                {/* Body */}
+                {isOpen && (
+                  <>
+                    {/* Параграфи-джерела */}
+                    {ep.paragraphNames?.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                        {ep.paragraphNames.map((name, k) => (
+                          <span key={k} style={{
+                            background: '#0f2744', color: '#475569', borderRadius: 3,
+                            padding: '1px 6px', fontSize: 10, fontFamily: 'monospace',
+                          }}>
+                            {name}
+                          </span>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    )}
 
-                {ep.dbOperations?.length > 0 && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={subLabelStyle}>DB Operations</div>
-                    <div style={{ background: '#0a1628', borderRadius: 4, padding: '6px 8px' }}>
-                      {ep.dbOperations.map((op, j) => <DbOpRow key={j} op={op} />)}
-                    </div>
-                  </div>
-                )}
+                    {/* Steps */}
+                    {ep.steps?.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={subLabelStyle}>Steps</div>
+                        {ep.steps.map((s, j) => {
+                          const isEditing = editing?.epIndex === i && editing?.stepIndex === j
+                          const { icon, color } = stepIcon(s)
+                          return (
+                            <div key={j} style={{ display: 'flex', gap: 8, marginBottom: 4, alignItems: 'flex-start' }}>
+                              <span style={{ color, fontSize: 11, flexShrink: 0, minWidth: 16, textAlign: 'center', paddingTop: 2 }}>{icon}</span>
+                              {isEditing ? (
+                                <div style={{ flex: 1 }}>
+                                  <textarea
+                                    autoFocus
+                                    value={editText}
+                                    onChange={e => setEditText(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveStep(i, j) }
+                                      if (e.key === 'Escape') setEditing(null)
+                                    }}
+                                    style={{
+                                      width: '100%', background: '#0a1628', color: '#e2e8f0',
+                                      border: '1px solid #3b82f6', borderRadius: 4,
+                                      padding: '4px 6px', fontSize: 12, resize: 'vertical',
+                                      fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box',
+                                    }}
+                                    rows={Math.max(2, Math.ceil(editText.length / 80))}
+                                  />
+                                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                                    <button
+                                      onClick={() => saveStep(i, j)}
+                                      style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 3, padding: '2px 10px', fontSize: 11, cursor: 'pointer' }}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => setEditing(null)}
+                                      style={{ background: 'none', color: '#64748b', border: 'none', fontSize: 11, cursor: 'pointer' }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span
+                                  style={{ color: '#cbd5e1', fontSize: 12, flex: 1, cursor: 'text', lineHeight: 1.5 }}
+                                  onClick={() => startEdit(i, j, s)}
+                                  title="Click to edit"
+                                >
+                                  {enrichStepText(s, catalogMap)}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
 
-                {ep.sideEffects?.length > 0 && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={subLabelStyle}>Side Effects</div>
-                    {ep.sideEffects.map((s, j) => (
-                      <div key={j} style={{ color: '#fbbf24', fontSize: 11, marginBottom: 2 }}>⚡ {s}</div>
-                    ))}
-                  </div>
-                )}
+                    {ep.dbOperations?.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={subLabelStyle}>DB Operations</div>
+                        <div style={{ background: '#0a1628', borderRadius: 4, padding: '6px 8px' }}>
+                          {ep.dbOperations.map((op, j) => <DbOpRow key={j} op={op} />)}
+                        </div>
+                      </div>
+                    )}
 
-                {ep.returns && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={subLabelStyle}>Returns</div>
-                    <div style={{ color: '#4ade80', fontSize: 12 }}>✓ {ep.returns}</div>
-                  </div>
-                )}
+                    {ep.sideEffects?.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={subLabelStyle}>Side Effects</div>
+                        {ep.sideEffects.map((s, j) => (
+                          <div key={j} style={{ color: '#fbbf24', fontSize: 11, marginBottom: 2 }}>⚡ {s}</div>
+                        ))}
+                      </div>
+                    )}
 
-                {ep.errors?.length > 0 && (
-                  <div>
-                    <div style={subLabelStyle}>Errors</div>
-                    {ep.errors.map((e, j) => (
-                      <div key={j} style={{ color: '#f87171', fontSize: 11, marginBottom: 2 }}>✗ {e}</div>
-                    ))}
-                  </div>
+                    {ep.returns && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={subLabelStyle}>Returns</div>
+                        <div style={{ color: '#4ade80', fontSize: 12 }}>✓ {ep.returns}</div>
+                      </div>
+                    )}
+
+                    {ep.errors?.length > 0 && (
+                      <div>
+                        <div style={subLabelStyle}>Errors</div>
+                        {ep.errors.map((e, j) => (
+                          <div key={j} style={{ color: '#f87171', fontSize: 11, marginBottom: 2 }}>✗ {e}</div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )

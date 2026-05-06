@@ -52,6 +52,17 @@ export async function getAnalysisByProgramId(program_id) {
   return rows[0] || null
 }
 
+export async function patchEntryPoints(program_id, entry_points) {
+  const { rows } = await pool.query(
+    `UPDATE program_analysis
+     SET entry_points = $2, updated_at = NOW()
+     WHERE program_id = $1
+     RETURNING entry_points`,
+    [program_id, JSON.stringify(entry_points)]
+  )
+  return rows[0]?.entry_points
+}
+
 export async function updateFlag(program_id, condition, flag) {
   if (flag === null) {
     const { rows } = await pool.query(

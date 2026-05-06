@@ -160,17 +160,28 @@ WARNING — PERFORM targets not found as paragraph definitions (possible dynamic
       "sideEffects": ["Inserts row into exreur"],
       "returns": "...",
       "errors": ["1500 (EUR-EXEC-LGN-ID): login not provided"],
-      "dbOperations": [{ "table": "exreur", "operation": "INSERT", "keyFields": [], "notFoundAction": "n/a" }]
+      "dbOperations": [{ "table": "exreur", "operation": "INSERT", "keyFields": [], "notFoundAction": null }]
     }
   ],
   "errorCatalog": [{ "code": "1500", "businessMeaning": "...", "systemAction": "..." }],
   "externalDependencies": [{ "program": "ARCUSACS", "purpose": "...", "dataIn": "...", "dataOut": "..." }],
-  "dbTables": [{ "table": "exreur", "operation": "SELECT/INSERT", "fields": [...], "keyFields": [...], "notFoundAction": "..." }],
+  "dbTables": [{ "table": "exreur", "operation": "SELECT", "fields": [...], "keyFields": [...], "notFoundAction": { "type": "error", "code": 1500 } }],
   "fileIO": [{ "file": "USR-FILE", "operations": ["OPEN","READ","CLOSE"] }]
 }
 ```
 
 **Важливо:** AI не вигадує назви таблиць — правило в промпті вимагає використовувати ТОЧНІ назви з секцій `DATABASE OPERATIONS` вище. Якщо таблиця є в параграфі але не в структурному блоці — писати COBOL-префікс як є.
+
+**`notFoundAction` — структурований об'єкт** (для SELECT-операцій). Чотири типи:
+- `{ "type": "error", "code": N }` — виконання зупиняється, повертається код помилки
+- `{ "type": "defaults", "fields": { "FIELD": value }, "logError": bool }` — встановлюються конкретні поля й виконання продовжується
+- `{ "type": "continue" }` — відсутність запису є нормальною бізнес-логікою
+- `{ "type": "skip" }` — операція умовно пропускається (не виконується взагалі)
+- INSERT/UPDATE/DELETE → `null`
+
+AI визначає тип, читаючи COBOL параграф, а не здогадуючись з каталогу помилок.
+
+**`errorCatalog`** — тільки коди, які буквально присутні в COBOL (`MOVE <literal> TO status-field`). Вигадані коди на кшталт `9999` заборонені правилом промпту.
 
 **Валідація `dbTables` (`validateDbTables`):** після отримання відповіді AI, кожна таблиця в `dbTables` перевіряється проти списку відомих таблиць з `extractExecSql` + `extractTuxTables`. Якщо назва таблиці не знайдена в жодному з джерел — запис помічається `ai_hallucinated: true`. Якщо структурний аналіз не знайшов жодної таблиці (порожній known set) — валідація пропускається (ми не можемо стверджувати що AI помилився).
 
@@ -334,9 +345,9 @@ WS-PRS-MD-INFO PIC X(01) VALUE "1"
 - Правильні WS константи (без плейсхолдерів)
 - ICF×CDV вкладений IF здебільшого коректний (`(icfAutoUpd === 0 || cdvInsyncActv === 0) ? 0 : 1`)
 
-**Відомі проблеми:**
-- Error 1508 (CDV not found) — AI генерує як hard error, хоча в COBOL це warning + defaults (`SET-OUT-LNK-NO-CDV` → INSYNC-ACTV=0, UPD-AUTH-REQD=1 → EXIT). Потребує точних steps.
-- AI іноді додає `catch → error: 9999` якого немає в COBOL — заборонено правилом промпту, але не завжди дотримується
+**Відомі проблеми (вирішені):**
+- Error 1508 (CDV not found) — раніше AI генерував як hard error. Виправлено: новий структурований `notFoundAction` з типом `defaults` точно описує `SET-OUT-LNK-NO-CDV` → INSYNC-ACTV=0, UPD-AUTH-REQD=1 + `logError: true`. Steps тепер повинні містити inline-опис поведінки при not found.
+- AI вигадував `catch → error: 9999` якого немає в COBOL — тепер заборонено явним правилом `errorCatalog`: тільки коди з буквальних MOVE в COBOL-джерелі.
 
 **Експеримент: steps vs. no steps**
 

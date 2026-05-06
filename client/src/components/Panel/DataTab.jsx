@@ -1,3 +1,31 @@
+function renderNotFoundSection(nfa) {
+  if (!nfa || nfa === 'n/a') return null
+  let color = '#f59e0b'
+  let text
+  if (typeof nfa === 'string') {
+    text = `→ ${nfa}`
+  } else if (nfa.type === 'error') {
+    color = '#f87171'
+    text = `→ error ${nfa.code}`
+  } else if (nfa.type === 'defaults') {
+    const fields = nfa.fields ? Object.entries(nfa.fields).map(([k, v]) => `${k}=${v}`).join(', ') : ''
+    text = `→ defaults${fields ? ` (${fields})` : ''}${nfa.logError ? ' ⚡log' : ''}`
+  } else if (nfa.type === 'continue') {
+    color = '#64748b'
+    text = '→ continue'
+  } else if (nfa.type === 'skip') {
+    return null
+  } else {
+    return null
+  }
+  return (
+    <>
+      <div style={{ color: '#475569', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2, marginTop: 6 }}>Not Found</div>
+      <p style={{ color, fontSize: 11, margin: 0 }}>{text}</p>
+    </>
+  )
+}
+
 function opColor(op = '') {
   const hasRead  = /READ|SELECT|SGE|RDN/.test(op)
   const hasWrite = /WRITE|INSERT|UPDATE|DELETE|INL|UPD|DEL/.test(op)
@@ -47,12 +75,7 @@ export default function DataTab({ analysis }) {
                 </>
               )}
 
-              {t.notFoundAction && t.notFoundAction !== 'n/a' && (
-                <>
-                  <div style={subLabelStyle}>Not Found</div>
-                  <p style={{ color: '#f59e0b', fontSize: 11, margin: 0 }}>→ {t.notFoundAction}</p>
-                </>
-              )}
+              {renderNotFoundSection(t.notFoundAction)}
             </div>
           ))}
         </div>

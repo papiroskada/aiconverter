@@ -8,6 +8,12 @@ const DEFAULTS = {
   claude_model_rules: 'claude-haiku-4-5-20251001',
   openai_model_interface: 'gpt-4o',
   openai_model_rules: 'gpt-4o-mini',
+  code_db_read:          "await db.select('{table}', { {key}: {value} })",
+  code_db_write:         "await db.insert('{table}', data) / await db.update('{table}', data, { {key} })",
+  code_error_convention: "return { error: {code}, field: '{field}' }",
+  code_external_call:    "await callProgram('{name}', input)",
+  code_language:         'typescript',
+  code_source_mode:      'with_source',
 }
 
 export async function getSettings() {
