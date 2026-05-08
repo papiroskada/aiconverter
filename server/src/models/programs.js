@@ -64,7 +64,20 @@ export async function getAllPrograms() {
     SELECT
       p.id, p.name, p.status, p.application_id, p.file_type,
       COALESCE(jsonb_array_length(pa.entry_points), 0)::int AS entry_point_count,
-      COALESCE(pa.flags, '{}') AS flags
+      COALESCE(pa.flags, '{}') AS flags,
+      (
+        SELECT COALESCE(jsonb_agg(t->>'table'), '[]'::jsonb)
+        FROM jsonb_array_elements(COALESCE(pa.db_tables, '[]')) t
+        WHERE NOT COALESCE((t->>'ai_hallucinated')::boolean, false)
+      ) AS table_names,
+      (
+        SELECT COALESCE(jsonb_agg(d->>'program'), '[]'::jsonb)
+        FROM jsonb_array_elements(COALESCE(pa.external_dependencies, '[]')) d
+      ) AS dependency_names,
+      (
+        SELECT COALESCE(jsonb_agg(e->>'code'), '[]'::jsonb)
+        FROM jsonb_array_elements(COALESCE(pa.error_catalog, '[]')) e
+      ) AS error_codes
     FROM programs p
     LEFT JOIN program_analysis pa ON pa.program_id = p.id
     ORDER BY p.created_at ASC

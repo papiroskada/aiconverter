@@ -262,6 +262,7 @@ export async function generateProgram(programId) {
 
   return {
     programName: program.name,
+    language: patterns.language,
     entryPoints: entryPoints.map(ep => ({ condition: ep.condition, businessName: ep.businessName })),
     paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
     contextTokenEstimate: Math.ceil(context.length / 4),

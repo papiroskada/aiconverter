@@ -65,3 +65,23 @@ export async function patchFlags(id, condition, flag) {
   if (!res.ok) throw new Error('Failed to update flag')
   return res.json()
 }
+
+export async function generateFullProgram(id) {
+  const res = await fetch(`${BASE}/${id}/generate-program`, { method: 'POST' })
+  if (!res.ok) {
+    let msg = 'Generate failed'
+    try { const b = await res.json(); if (b?.error) msg = b.error } catch {}
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+export async function generateApplicationCode(appId) {
+  const res = await fetch(`${BASE}/application/${appId}/generate`, { method: 'POST' })
+  if (!res.ok) {
+    let msg = 'Generate failed'
+    try { const b = await res.json(); if (b?.error) msg = b.error } catch {}
+    throw new Error(msg)
+  }
+  return res.json()
+}

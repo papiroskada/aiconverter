@@ -7,6 +7,7 @@ import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
 import { generateEntryPoint, generateProgram, generateDbTypes, checkConsistency, generateApplication } from '../services/codeGenerationService.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
+import { toMarkdown, toOpenApi } from '../services/exportService.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage() })
@@ -40,7 +41,7 @@ router.post('/consistency-check', async (req, res, next) => {
 router.post('/application/:appId/generate', async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      'SELECT program_id FROM application_programs WHERE application_id = $1',
+      'SELECT id AS program_id FROM programs WHERE application_id = $1',
       [req.params.appId]
     )
     const programIds = rows.map(r => r.program_id)
@@ -78,6 +79,32 @@ router.get('/:id/calls', async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+// GET /api/programs/:id/export?format=markdown|openapi
+router.get('/:id/export', async (req, res, next) => {
+  try {
+    const [program, analysis] = await Promise.all([
+      findProgramById(req.params.id),
+      getAnalysisByProgramId(req.params.id),
+    ])
+    if (!program || !analysis) return res.status(404).json({ error: 'Not found' })
+
+    const format = req.query.format ?? 'markdown'
+    if (format === 'markdown') {
+      const content = toMarkdown(program, analysis)
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="${program.name}.md"`)
+      return res.send(content)
+    }
+    if (format === 'openapi') {
+      const spec = toOpenApi(program, analysis)
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Content-Disposition', `attachment; filename="${program.name}-openapi.json"`)
+      return res.json(spec)
+    }
+    res.status(400).json({ error: 'Unknown format. Use markdown or openapi.' })
+  } catch (err) { next(err) }
 })
 
 // GET /api/programs/:id

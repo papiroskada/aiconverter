@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const STATUS_COLOR = {
   analyzed:  '#4ade80',
@@ -9,6 +9,26 @@ const STATUS_COLOR = {
 
 function flagCount(flags) {
   return Object.keys(flags ?? {}).length
+}
+
+function FilterInput({ label, placeholder, value, onChange }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ color: '#475569', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        {label}
+      </span>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          background: '#1e293b', border: '1px solid #334155', borderRadius: 5,
+          color: '#e2e8f0', padding: '4px 10px', fontSize: 11, width: 130, outline: 'none',
+        }}
+      />
+    </div>
+  )
 }
 
 function ProgramCard({ node, stepData, onClick }) {
@@ -63,10 +83,17 @@ function ProgramCard({ node, stepData, onClick }) {
   )
 }
 
-const FILTERS = ['all', 'flagged', 'analyzed', 'failed']
+const STATUS_FILTERS = ['all', 'flagged', 'analyzed', 'failed']
+const EMPTY_FILTERS = { name: '', table: '', calls: '', error: '' }
 
 export default function ProgramGrid({ nodes, selectedAppId, stepProgress, onProgramClick }) {
-  const [filter, setFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [filters, setFilters] = useState(EMPTY_FILTERS)
+
+  useEffect(() => {
+    setFilters(EMPTY_FILTERS)
+    setStatusFilter('all')
+  }, [selectedAppId])
 
   if (!selectedAppId) {
     return (
@@ -76,30 +103,42 @@ export default function ProgramGrid({ nodes, selectedAppId, stepProgress, onProg
     )
   }
 
+  function setFilter(key, val) {
+    setFilters(prev => ({ ...prev, [key]: val }))
+  }
+
   const appNodes = nodes.filter(n => n.data.applicationId === selectedAppId && !n.data.isPhantom)
 
   const filtered = appNodes.filter(n => {
-    if (filter === 'all') return true
-    if (filter === 'flagged') return flagCount(n.data.flags) > 0
-    if (filter === 'analyzed') return n.data.status === 'analyzed'
-    if (filter === 'failed') return n.data.status === 'failed'
+    const { name, table, calls, error } = filters
+    if (name  && !n.data.name.toLowerCase().includes(name.toLowerCase())) return false
+    if (table && !(n.data.tableNames ?? []).some(t => t?.toLowerCase().includes(table.toLowerCase()))) return false
+    if (calls && !(n.data.dependencyNames ?? []).some(d => d?.toLowerCase().includes(calls.toLowerCase()))) return false
+    if (error && !(n.data.errorCodes ?? []).some(c => String(c).includes(error))) return false
+    if (statusFilter === 'flagged')  return flagCount(n.data.flags) > 0
+    if (statusFilter === 'analyzed') return n.data.status === 'analyzed'
+    if (statusFilter === 'failed')   return n.data.status === 'failed'
     return true
   })
 
+  const hasFilter = Object.values(filters).some(Boolean)
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '16px 20px', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexShrink: 0 }}>
+
+      {/* Row 1: title + status filters */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexShrink: 0 }}>
         <h2 style={{ color: '#e2e8f0', margin: 0, fontSize: 16, fontWeight: 700 }}>Programs</h2>
         <span style={{ color: '#475569', fontSize: 12 }}>{appNodes.length} files</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {FILTERS.map(f => (
+          {STATUS_FILTERS.map(f => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => setStatusFilter(f)}
               style={{
-                background: filter === f ? '#334155' : 'transparent',
-                border: `1px solid ${filter === f ? '#475569' : '#1e293b'}`,
-                color: filter === f ? '#e2e8f0' : '#64748b',
+                background: statusFilter === f ? '#334155' : 'transparent',
+                border: `1px solid ${statusFilter === f ? '#475569' : '#1e293b'}`,
+                color: statusFilter === f ? '#e2e8f0' : '#64748b',
                 borderRadius: 5, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
               }}
             >
@@ -109,9 +148,28 @@ export default function ProgramGrid({ nodes, selectedAppId, stepProgress, onProg
         </div>
       </div>
 
+      {/* Row 2: search inputs */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 14, flexWrap: 'wrap', flexShrink: 0 }}>
+        <FilterInput label="Name"       placeholder="e.g. VLLREUR"  value={filters.name}  onChange={v => setFilter('name', v)} />
+        <FilterInput label="DB table"   placeholder="e.g. exreur"   value={filters.table} onChange={v => setFilter('table', v)} />
+        <FilterInput label="Calls"      placeholder="e.g. ARCUSACS" value={filters.calls} onChange={v => setFilter('calls', v)} />
+        <FilterInput label="Error code" placeholder="e.g. 1500"     value={filters.error} onChange={v => setFilter('error', v)} />
+        {hasFilter && (
+          <button
+            onClick={() => setFilters(EMPTY_FILTERS)}
+            style={{
+              alignSelf: 'flex-end', background: 'none', border: '1px solid #334155',
+              color: '#64748b', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer',
+            }}
+          >
+            ✕ Clear
+          </button>
+        )}
+      </div>
+
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
-          <p style={{ color: '#334155', fontSize: 13 }}>No programs match this filter.</p>
+          <p style={{ color: '#334155', fontSize: 13 }}>No programs match.</p>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
             {filtered.map(node => (

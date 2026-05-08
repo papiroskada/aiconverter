@@ -1,12 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { fetchProgram, deleteProgram, triggerReanalyze } from '../../api/programs.js'
 import OverviewTab from './OverviewTab.jsx'
 import LogicTab from './LogicTab.jsx'
 import ConnectionsTab from './ConnectionsTab.jsx'
 import DataTab from './DataTab.jsx'
+import CodeTab from './CodeTab.jsx'
 
-const TABS = ['Overview', 'Logic', 'Data', 'Connections']
+const TABS = ['Overview', 'Logic', 'Data', 'Connections', 'Code']
 const STATUS_COLOR = { analyzed: '#4ade80', analyzing: '#60a5fa', pending: '#475569', failed: '#f87171' }
+
+const EXPORT_ITEM_STYLE = {
+  display: 'block', width: '100%', background: 'none', border: 'none',
+  color: '#e2e8f0', padding: '8px 14px', textAlign: 'left',
+  cursor: 'pointer', fontSize: 12,
+}
 
 function ProgressUI({ step, total }) {
   const pct = Math.round((step / total) * 100)
@@ -27,6 +34,8 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
   const [deleting, setDeleting] = useState(false)
   const [reanalyzing, setReanalyzing] = useState(false)
   const [error, setError] = useState(null)
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef(null)
 
   useEffect(() => {
     if (!programId) return
@@ -40,6 +49,15 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
     if (!programId || refreshTrigger === 0) return
     fetchProgram(programId).then(setProgram).catch(console.error)
   }, [programId, refreshTrigger])
+
+  useEffect(() => {
+    if (!exportOpen) return
+    function handleClick(e) {
+      if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [exportOpen])
 
   async function handleDelete() {
     if (!programId || deleting) return
@@ -73,7 +91,17 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
     setProgram(prev => prev ? { ...prev, analysis: { ...prev.analysis, flags: updatedFlags } } : prev)
   }
 
+  function handleExport(format) {
+    setExportOpen(false)
+    const url = `/api/programs/${programId}/export?format=${format}`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = format === 'openapi' ? `${program.name}-openapi.json` : `${program.name}.md`
+    a.click()
+  }
+
   const stepData = stepProgress.get(programId)
+  const isCodeTab = tab === 'Code'
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f172a' }}>
@@ -89,6 +117,33 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
           {program && <div style={{ fontSize: 11, color: STATUS_COLOR[program.status], marginTop: 1 }}>● {program.status}</div>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <div ref={exportRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setExportOpen(o => !o)}
+              disabled={!program?.analysis}
+              style={{
+                background: '#1e293b', border: '1px solid #334155', color: '#94a3b8',
+                borderRadius: 6, padding: '6px 12px', fontSize: 11, cursor: 'pointer',
+                opacity: !program?.analysis ? 0.4 : 1,
+              }}
+            >
+              Export ▾
+            </button>
+            {exportOpen && (
+              <div style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 4px)',
+                background: '#1e293b', border: '1px solid #334155', borderRadius: 6,
+                zIndex: 30, minWidth: 150, boxShadow: '0 4px 12px #00000066', overflow: 'hidden',
+              }}>
+                <button onClick={() => handleExport('markdown')} style={EXPORT_ITEM_STYLE}>
+                  Markdown doc
+                </button>
+                <button onClick={() => handleExport('openapi')} style={EXPORT_ITEM_STYLE}>
+                  OpenAPI JSON
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={handleReanalyze}
             disabled={reanalyzing || program?.status === 'analyzing'}
@@ -124,8 +179,8 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-        {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 12 }}>{error}</div>}
+      <div style={{ flex: 1, overflowY: isCodeTab ? 'hidden' : 'auto', padding: isCodeTab ? '20px 24px 16px' : '20px 24px', display: 'flex', flexDirection: 'column' }}>
+        {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 12, flexShrink: 0 }}>{error}</div>}
         {stepData && <ProgressUI step={stepData.step} total={stepData.total} />}
         {!program ? (
           <p style={{ color: '#64748b' }}>Loading…</p>
@@ -135,6 +190,13 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
             {tab === 'Logic'       && <LogicTab analysis={program.analysis} programId={programId} onFlagsChange={handleFlagsChange} />}
             {tab === 'Data'        && <DataTab analysis={program.analysis} />}
             {tab === 'Connections' && <ConnectionsTab edges={program.edges || []} programId={programId} onNavigate={onNavigate} analysis={program.analysis} />}
+            {tab === 'Code'        && (
+              <CodeTab
+                programId={programId}
+                programName={program.name}
+                applicationId={program.application_id}
+              />
+            )}
           </>
         )}
       </div>

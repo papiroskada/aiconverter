@@ -42,6 +42,9 @@ function buildNodes(programs) {
       fileType: p.file_type ?? 'cobol',
       entryPointCount: p.entry_point_count ?? 0,
       flags: p.flags ?? {},
+      tableNames: p.table_names ?? [],
+      dependencyNames: p.dependency_names ?? [],
+      errorCodes: p.error_codes ?? [],
     },
   }))
 }
