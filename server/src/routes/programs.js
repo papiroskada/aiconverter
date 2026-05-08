@@ -5,7 +5,7 @@ import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag, patchEntryPoints } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPoint, generateProgram, generateDbTypes, checkConsistency, generateApplication } from '../services/codeGenerationService.js'
+import { generateEntryPoint, generateProgram, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGenerationService.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 
@@ -34,6 +34,20 @@ router.post('/consistency-check', async (req, res, next) => {
     if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
     const warnings = await checkConsistency(programIds)
     res.json({ warnings })
+  } catch (err) { next(err) }
+})
+
+// POST /api/programs/application/:appId/generate-project
+router.post('/application/:appId/generate-project', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id AS program_id FROM programs WHERE application_id = $1',
+      [req.params.appId]
+    )
+    const programIds = rows.map(r => r.program_id)
+    if (!programIds.length) return res.status(422).json({ error: 'No programs in application' })
+    const result = await generateProject(programIds)
+    res.json(result)
   } catch (err) { next(err) }
 })
 

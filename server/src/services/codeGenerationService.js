@@ -73,6 +73,22 @@ function selectRelevantChunks(paragraphChunks, paragraphNames, performGraph, pre
   return paragraphChunks.filter(c => allNames.has(c.chunk_name))
 }
 
+function toPascal(name) {
+  return name.replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/(^|_)([a-z\d])/g, (_, __, c) => c.toUpperCase())
+}
+
+function assembleCode(result) {
+  const { imports = [], sharedTypes, functions = [], dispatcher } = result
+  const parts = [
+    imports.length ? imports.join('\n') : null,
+    sharedTypes?.trim() || null,
+    functions.length ? functions.map(f => f.code).join('\n\n') : null,
+    dispatcher?.trim() || null,
+  ]
+  return parts.filter(Boolean).join('\n\n')
+}
+
 function sourceSection(relevantChunks, settings) {
   if (settings.code_source_mode === 'logic_only') return ''
   const text = relevantChunks.map(c => `[${c.chunk_name}]\n${c.cobol_text}`).join('\n\n') || '(none)'
@@ -263,6 +279,7 @@ export async function generateProgram(programId) {
   return {
     programName: program.name,
     language: patterns.language,
+    code: assembleCode(result),
     entryPoints: entryPoints.map(ep => ({ condition: ep.condition, businessName: ep.businessName })),
     paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
     contextTokenEstimate: Math.ceil(context.length / 4),
@@ -391,6 +408,41 @@ async function buildGenerationOrder(programIds) {
   return [...order, ...remaining]
 }
 
+async function wireInterProgramCalls(results) {
+  const generatedNames = new Set(results.filter(r => r.status === 'ok').map(r => r.programName))
+
+  const analysisMap = new Map()
+  await Promise.all(
+    results.filter(r => r.status === 'ok').map(async r => {
+      const a = await getAnalysisByProgramId(r.programId)
+      if (a) analysisMap.set(r.programName, a)
+    })
+  )
+
+  for (const r of results) {
+    if (r.status !== 'ok') continue
+    const analysis = analysisMap.get(r.programName)
+    if (!analysis) continue
+
+    for (const dep of (analysis.external_dependencies ?? [])) {
+      if (!generatedNames.has(dep.program)) continue
+
+      const funcName = `execute${toPascal(dep.program)}`
+      const pattern = new RegExp(`callProgram\\(['"]${dep.program}['"],\\s*`, 'g')
+
+      r.dispatcher = r.dispatcher?.replace(pattern, `${funcName}(`)
+      r.functions = r.functions?.map(f => ({ ...f, code: f.code.replace(pattern, `${funcName}(`) }))
+
+      const importLine = `import { execute as ${funcName} } from './${dep.program}.js'`
+      if (!(r.imports ?? []).includes(importLine)) {
+        r.imports = [importLine, ...(r.imports ?? [])]
+      }
+    }
+
+    r.code = assembleCode(r)
+  }
+}
+
 export async function generateApplication(programIds) {
   const order = await buildGenerationOrder(programIds)
   const results = []
@@ -404,5 +456,70 @@ export async function generateApplication(programIds) {
     }
   }
 
+  await wireInterProgramCalls(results)
+
   return { order, results }
+}
+
+// ─── public: full project with db stub + index ───────────────────────────────
+
+function generateDbStub(language) {
+  if (language === 'typescript') return `\
+// Auto-generated — replace with your actual DB driver
+export const db = {
+  async select<T>(table: string, key: Record<string, unknown>): Promise<T | null> {
+    throw new Error(\`db.select('\${table}') not implemented\`)
+  },
+  async insert<T>(table: string, data: Record<string, unknown>): Promise<T> {
+    throw new Error(\`db.insert('\${table}') not implemented\`)
+  },
+  async update<T>(table: string, data: Record<string, unknown>, key: Record<string, unknown>): Promise<T | null> {
+    throw new Error(\`db.update('\${table}') not implemented\`)
+  },
+  async delete(table: string, key: Record<string, unknown>): Promise<void> {
+    throw new Error(\`db.delete('\${table}') not implemented\`)
+  },
+}
+`
+  return `\
+// Auto-generated — replace with your actual DB driver
+export const db = {
+  async select(table, key) { throw new Error(\`db.select('\${table}') not implemented\`) },
+  async insert(table, data) { throw new Error(\`db.insert('\${table}') not implemented\`) },
+  async update(table, data, key) { throw new Error(\`db.update('\${table}') not implemented\`) },
+  async delete(table, key) { throw new Error(\`db.delete('\${table}') not implemented\`) },
+}
+`
+}
+
+function generateIndex(results, language) {
+  const ok = results.filter(r => r.status === 'ok')
+  const lines = ['// Auto-generated program registry — do not edit manually', '']
+  for (const r of ok) {
+    lines.push(`export { execute as execute${toPascal(r.programName)} } from './${r.programName}.js'`)
+  }
+  return lines.join('\n') + '\n'
+}
+
+export async function generateProject(programIds) {
+  const { order, results } = await generateApplication(programIds)
+
+  const language = results.find(r => r.status === 'ok')?.language ?? 'typescript'
+  const ext = language === 'typescript' ? 'ts' : 'js'
+
+  const files = []
+  const warnings = []
+
+  for (const r of results) {
+    if (r.status === 'ok') {
+      files.push({ path: `src/${r.programName}.${ext}`, content: r.code })
+    } else {
+      warnings.push(`${r.programName}: ${r.error}`)
+    }
+  }
+
+  files.push({ path: `src/db.${ext}`,    content: generateDbStub(language) })
+  files.push({ path: `src/index.${ext}`, content: generateIndex(results, language) })
+
+  return { files, warnings, order }
 }

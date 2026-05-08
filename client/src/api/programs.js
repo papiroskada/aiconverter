@@ -76,6 +76,16 @@ export async function generateFullProgram(id) {
   return res.json()
 }
 
+export async function generateProjectFiles(appId) {
+  const res = await fetch(`${BASE}/application/${appId}/generate-project`, { method: 'POST' })
+  if (!res.ok) {
+    let msg = 'Generate failed'
+    try { const b = await res.json(); if (b?.error) msg = b.error } catch {}
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
 export async function generateApplicationCode(appId) {
   const res = await fetch(`${BASE}/application/${appId}/generate`, { method: 'POST' })
   if (!res.ok) {

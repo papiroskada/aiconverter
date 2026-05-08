@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { generateFullProgram, generateApplicationCode } from '../../api/programs.js'
+import { generateFullProgram, generateProjectFiles } from '../../api/programs.js'
 
 const BTN = {
   base: {
@@ -58,15 +58,11 @@ export default function CodeTab({ programId, programName, applicationId }) {
   async function handleDownloadZip() {
     setZipping(true)
     try {
-      const { results } = await generateApplicationCode(applicationId)
+      const { files, warnings } = await generateProjectFiles(applicationId)
       const { default: JSZip } = await import('jszip')
       const zip = new JSZip()
-      const src = zip.folder('src')
-      for (const r of results) {
-        if (r.status !== 'ok' || !r.code) continue
-        const ext = (r.language ?? 'typescript') === 'typescript' ? 'ts' : 'js'
-        src.file(`${r.programName}.${ext}`, r.code)
-      }
+      for (const f of files) zip.file(f.path, f.content)
+      if (warnings?.length) zip.file('WARNINGS.txt', warnings.join('\n'))
       const blob = await zip.generateAsync({ type: 'blob' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
