@@ -279,8 +279,10 @@ UNIQUE constraint: `(caller_program_id, callee_name)`.
 ## 9. Генерація коду
 
 **Endpoint:** `POST /api/programs/:id/generate`  
-**Body:** `{ "condition": "FUNC='RD'" }` — умова entry point (або відсутнє → перший entry point).  
-**Response:** `{ functionName, code, notes, paragraphsIncluded, contextTokenEstimate }`
+**Body:** `{ "condition": "FUNC='RD'", "includeTests": false }` — умова entry point (або відсутнє → перший entry point); `includeTests` — опціонально, генерує unit тести разом з кодом.  
+**Response:** `{ functionName, code, notes, paragraphsIncluded, contextTokenEstimate, tests? }`
+
+Поле `tests` присутнє тільки якщо `includeTests: true` — містить готовий Vitest файл.
 
 ### Контекст для генерації (`codeGenerationService.js`)
 
@@ -352,3 +354,132 @@ WS-PRS-MD-INFO PIC X(01) VALUE "1"
 **Експеримент: steps vs. no steps**
 
 Прибрання `steps` з контексту дало гірший результат: AI вигадував зайві функції (`callService`, `logError`) і підтягував нерелевантні WS константи. Steps залишаються в контексті — вони зменшують noise і дають AI правильний порядок операцій. Покращені правила промпту (`CODE_GENERATION_PROMPT`) вимагають: логіку брати з COBOL параграфів, boolean умови переводити буквально, не додавати catch блоки яких немає в COBOL.
+
+---
+
+## 10. Типізовані контракти між програмами
+
+**Endpoint:** `POST /api/programs/program-types`  
+**Body:** `{ "programIds": [1, 2, 3] }`  
+**Response:** `{ code, programs }` — готовий `types.ts` файл і список програм.
+
+### `generateProgramTypes(programIds)`
+
+Детерміністична функція (без AI). Читає `input_contract` і `output_contract` з `program_analysis` для кожної програми та генерує TypeScript інтерфейси:
+
+```typescript
+// src/types.ts — авто-згенерований файл
+export interface ExrvllInput {
+  execLgnId: string     // EUR-EXEC-LGN-ID
+  macaddr: string       // CDV-MACADDR
+}
+export interface ExrvllOutput {
+  insyncActv: number
+  updAuthReqd: number
+  returnCode: number
+}
+```
+
+Правила перетворення типів — ті самі що і в `mapResult`:
+- PIC X → `string`
+- PIC 9 / S9 → `number`
+- group level (no PIC) → `object`
+
+### Вплив на генерацію коду
+
+`PROGRAM_GENERATION_PROMPT` отримує додаткову секцію:
+
+```
+TYPESCRIPT INTERFACES (use for function signature):
+  Input type:  ExrvllInput
+  Output type: ExrvllOutput
+  Import from: './types.js'
+```
+
+AI генерує типізовані сигнатури:
+
+```typescript
+import type { ExrvllInput, ExrvllOutput } from './types.js'
+
+export async function execute(input: ExrvllInput): Promise<ExrvllOutput> { ... }
+```
+
+### Типізований wiring між програмами
+
+`wireInterProgramCalls` (у `generateApplication`) замінює нетипізований виклик:
+
+```typescript
+// До (нетипізований)
+const result = await callProgram('ARCUSACS', input)
+
+// Після (типізований)
+import type { ArcusacsInput } from './types.js'
+import { execute as executeArcusacs } from './ARCUSACS.js'
+const result = await executeArcusacs(input as ArcusacsInput)
+```
+
+### Структура project zip (оновлена)
+
+```
+src/
+  types.ts              ← новий: всі Input/Output інтерфейси
+  db.ts                 ← DB заглушка
+  index.ts              ← реєстр програм
+  EXRVLL.ts
+  ARCUSACS.ts
+  __tests__/            ← новий: якщо includeTests=true
+    EXRVLL.test.ts
+    ARCUSACS.test.ts
+```
+
+---
+
+## 11. Генерація тестів (опціонально)
+
+### Підхід
+
+Mock-based unit тести генеруються з аналізу — без запуску COBOL коду (він недоступний). Джерелом є структурований аналіз що вже є в БД: `errorCatalog`, `dbOperations.notFoundAction`, `steps`, `input_contract`.
+
+### Покриття тестів
+
+| Тип тесту | Джерело даних | Що перевіряє |
+|-----------|---------------|--------------|
+| Input validation | `steps` зі словами "blank", "zero", "invalid" | Повертає правильний error код |
+| NotFoundAction error | `dbOperations` з `{ type: 'error', code: N }` | `db.select` → null → повертає error N |
+| NotFoundAction defaults | `dbOperations` з `{ type: 'defaults', fields }` | `db.select` → null → встановлює конкретні поля, продовжує виконання |
+| NotFoundAction continue | `dbOperations` з `{ type: 'continue' }` | `db.select` → null → виконання продовжується нормально |
+| Happy path | `output_contract` | Всі DB операції успішні → повертає populated output |
+
+### Промпт `TEST_GENERATION_PROMPT`
+
+Отримує той самий контекст що й `CODE_GENERATION_PROMPT` (без COBOL параграфів — тільки аналіз).
+
+Правила генерації:
+- Мокувати `db` і `callProgram` через `vi.mock`
+- Один тест на кожен error код з `errorCatalog`
+- Один тест на кожну `notFoundAction` (окрім null)
+- Один happy path тест
+- Використовувати точні назви полів з `input_contract` / `output_contract`
+- Для `{ type: 'defaults' }` — перевіряти точні значення з `notFoundAction.fields`
+- Не вигадувати error коди яких немає в `errorCatalog`
+
+Повертає JSON: `{ testFile, coverage }`.
+
+### `generateEntryPointTests(programId, condition)`
+
+Новий публічний метод у `codeGenerationService.js`. Будує контекст через `buildTestGenContext` — скорочена версія `buildCodeGenContext` без COBOL параграфів (вони не потрібні для тестів).
+
+### Providers
+
+Нові методи `claude.generateTests(context)` і `openai.generateTests(context)` — аналогічні до `generateCode` але з іншим промптом і схемою відповіді.
+
+### UI (CodeTab)
+
+- Checkbox "Include tests" перед генерацією
+- Після генерації з тестами — два таби: **Code** і **Tests**
+- Додаткова кнопка `↓ Download .test.ts`
+- У project zip тести потрапляють автоматично в `src/__tests__/` якщо `includeTests: true`
+
+### Вартість
+
+Окремий AI виклик, менший за генерацію коду (~30-50% від вартості code gen). Тригериться тільки при явному `includeTests: true`.

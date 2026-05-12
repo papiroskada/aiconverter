@@ -9,6 +9,40 @@ import { deserializePerformGraph } from '../ai/orchestrator.js'
 import { resolveTransitive } from '../parser/cobolParser.js'
 import { extractTuxTableSchemas, extractWsConstants } from '../parser/cobolExtractor.js'
 
+// ─── typed contracts helpers ─────────────────────────────────────────────────
+
+function contractToInterface(programName, contractJson, direction) {
+  let params
+  try { params = typeof contractJson === 'string' ? JSON.parse(contractJson) : contractJson } catch { return null }
+  if (!Array.isArray(params) || !params.length) return null
+  const typeName = toPascal(programName) + (direction === 'input' ? 'Input' : 'Output')
+  const lines = params.map(p => {
+    const tsType = p.type === 'number' ? 'number' : p.type === 'object' ? 'Record<string, unknown>' : 'string'
+    const optional = direction === 'output' ? '?' : ''
+    const comment = p.cobolName ? `  // ${p.cobolName}` : ''
+    return `  ${p.name}${optional}: ${tsType}${comment}`
+  })
+  return `export interface ${typeName} {\n${lines.join('\n')}\n}`
+}
+
+function interfaceSection(programName) {
+  const inputType = toPascal(programName) + 'Input'
+  const outputType = toPascal(programName) + 'Output'
+  return `\nTYPESCRIPT INTERFACES (use for function signature, import from './types.js'):\n  Input:  ${inputType}\n  Output: ${outputType}`
+}
+
+// Merge multiple vitest test files: keep boilerplate from first, extract describe blocks from the rest
+function mergeTestFiles(files) {
+  if (!files.length) return ''
+  if (files.length === 1) return files[0]
+  const parts = [files[0]]
+  for (let i = 1; i < files.length; i++) {
+    const match = files[i].match(/^describe\(/m)
+    if (match) parts.push(files[i].slice(match.index))
+  }
+  return parts.join('\n\n')
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function formatParams(contractJson) {
@@ -95,6 +129,46 @@ function sourceSection(relevantChunks, settings) {
   return `\nCOBOL SOURCE PARAGRAPHS:\n${text}`
 }
 
+// ─── test generation context ─────────────────────────────────────────────────
+
+function buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants) {
+  const errorList = (analysis.error_catalog ?? [])
+    .map(e => `  ${e.code}${e.businessMeaning ? ` — ${e.businessMeaning}` : ''}${e.systemAction ? `; ${e.systemAction}` : ''}`)
+    .join('\n') || '  (none)'
+
+  const steps = (ep.steps ?? []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  (none)'
+
+  const epDbTables = (ep.dbOperations?.length ? ep.dbOperations : analysis.db_tables ?? []).filter(t => !t.ai_hallucinated)
+  const dbOps = epDbTables.map(t => {
+    const keys = t.keyFields?.length ? `; key: ${t.keyFields.join(', ')}` : ''
+    const nfText = formatNotFoundAction(t.notFoundAction)
+    const nf = nfText ? `; if not found: ${nfText}` : ''
+    const header = `  ${t.table} (${t.operation}${keys}${nf})`
+    const fields = tableSchemas[t.table]
+    if (!fields?.length) return header
+    const fieldLines = fields.map(f => `    ${f.name} → ${f.camelName} (${f.type})`).join('\n')
+    return `${header}\n${fieldLines}`
+  }).join('\n\n') || '  (none)'
+
+  const stepsText = (ep.steps ?? []).join(' ').toUpperCase()
+  const referencedConstants = (wsConstants ?? []).filter(c => stepsText.includes(c.name))
+  const wsConstantsList = referencedConstants.length
+    ? referencedConstants.map(c => `  ${c.name} = "${c.value}" (js: ${c.camelName})`).join('\n')
+    : '  (none)'
+
+  return [
+    `PROGRAM: ${program.name}`,
+    `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
+    `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
+    `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
+    `\nWS CONSTANTS:\n${wsConstantsList}`,
+    `\nERROR CATALOG:\n${errorList}`,
+    `\nENTRY POINT: ${ep.businessName} (when ${ep.condition})`,
+    `STEPS:\n${steps}`,
+    `\nDB TABLE SCHEMAS:\n${dbOps}`,
+  ].join('\n')
+}
+
 // ─── single entry point context ─────────────────────────────────────────────
 
 function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings) {
@@ -127,6 +201,7 @@ function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, ws
   return [
     `PROGRAM: ${program.name}`,
     `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
+    interfaceSection(program.name),
     `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
     `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
     `\nTARGET PATTERNS:`,
@@ -184,6 +259,7 @@ function buildProgramContext(program, analysis, relevantChunks, tableSchemas, ws
   return [
     `PROGRAM: ${program.name}`,
     `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
+    interfaceSection(program.name),
     `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
     `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
     `\nWS CONSTANTS:\n${wsConstantsList}`,
@@ -229,7 +305,7 @@ async function loadProgramData(programId) {
 
 // ─── public: single entry point ─────────────────────────────────────────────
 
-export async function generateEntryPoint(programId, condition) {
+export async function generateEntryPoint(programId, condition, { includeTests = false } = {}) {
   const settings = await getSettings()
   const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
     await loadProgramData(programId)
@@ -247,18 +323,49 @@ export async function generateEntryPoint(programId, condition) {
   const provider = await getProvider(settings)
   const result = await provider.generateCode(context)
 
-  return {
+  const out = {
     programName: program.name,
     entryPoint: { condition: ep.condition, businessName: ep.businessName },
     paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
     contextTokenEstimate: Math.ceil(context.length / 4),
     ...result,
   }
+
+  if (includeTests) {
+    const testContext = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
+    const testResult = await provider.generateTests(testContext)
+    out.tests = testResult.testFile ?? ''
+    out.testsCoverage = testResult.coverage ?? []
+  }
+
+  return out
+}
+
+// ─── public: generate tests for a single entry point ────────────────────────
+
+export async function generateEntryPointTests(programId, condition) {
+  const settings = await getSettings()
+  const { program, analysis, tableSchemas, wsConstants } = await loadProgramData(programId)
+
+  const entryPoints = analysis.entry_points ?? []
+  const ep = condition ? entryPoints.find(e => e.condition === condition) : entryPoints[0]
+  if (!ep) throw Object.assign(new Error(`Entry point not found: ${condition}`), { status: 404 })
+
+  const context = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
+  const provider = await getProvider(settings)
+  const result = await provider.generateTests(context)
+
+  return {
+    programName: program.name,
+    entryPoint: { condition: ep.condition, businessName: ep.businessName },
+    testFile: result.testFile ?? '',
+    coverage: result.coverage ?? [],
+  }
 }
 
 // ─── public: whole program ───────────────────────────────────────────────────
 
-export async function generateProgram(programId) {
+export async function generateProgram(programId, { includeTests = false } = {}) {
   const settings = await getSettings()
   const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
     await loadProgramData(programId)
@@ -276,7 +383,7 @@ export async function generateProgram(programId) {
   const provider = await getProvider(settings)
   const result = await provider.generateProgram(context, patterns)
 
-  return {
+  const out = {
     programName: program.name,
     language: patterns.language,
     code: assembleCode(result),
@@ -284,6 +391,52 @@ export async function generateProgram(programId) {
     paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
     contextTokenEstimate: Math.ceil(context.length / 4),
     ...result,
+  }
+
+  if (includeTests) {
+    const testFiles = []
+    for (const ep of entryPoints) {
+      try {
+        const testContext = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
+        const testResult = await provider.generateTests(testContext)
+        if (testResult.testFile) testFiles.push(testResult.testFile)
+      } catch { /* non-fatal — skip failed entry point test */ }
+    }
+    out.tests = mergeTestFiles(testFiles)
+    out.testsCoverage = []
+  }
+
+  return out
+}
+
+// ─── public: program types (deterministic, no AI) ────────────────────────────
+
+export async function generateProgramTypes(programIds) {
+  const [programs, analyses] = await Promise.all([
+    Promise.all(programIds.map(findProgramById)),
+    Promise.all(programIds.map(getAnalysisByProgramId)),
+  ])
+
+  const blocks = []
+  const programNames = []
+
+  for (let i = 0; i < programs.length; i++) {
+    const program = programs[i]
+    const analysis = analyses[i]
+    if (!program || !analysis) continue
+    const inputBlock  = contractToInterface(program.name, analysis.input_contract,  'input')
+    const outputBlock = contractToInterface(program.name, analysis.output_contract, 'output')
+    if (!inputBlock && !outputBlock) continue
+    if (inputBlock)  blocks.push(inputBlock)
+    if (outputBlock) blocks.push(outputBlock)
+    programNames.push(program.name)
+  }
+
+  if (!blocks.length) return { code: '// No contracts found\n', programs: [] }
+
+  return {
+    code: `// Auto-generated program contracts — do not edit manually\n\n${blocks.join('\n\n')}\n`,
+    programs: programNames,
   }
 }
 
@@ -434,8 +587,9 @@ async function wireInterProgramCalls(results) {
       r.functions = r.functions?.map(f => ({ ...f, code: f.code.replace(pattern, `${funcName}(`) }))
 
       const importLine = `import { execute as ${funcName} } from './${dep.program}.js'`
+      const typeImportLine = `import type { ${toPascal(dep.program)}Input } from './types.js'`
       if (!(r.imports ?? []).includes(importLine)) {
-        r.imports = [importLine, ...(r.imports ?? [])]
+        r.imports = [typeImportLine, importLine, ...(r.imports ?? [])]
       }
     }
 
@@ -501,7 +655,7 @@ function generateIndex(results, language) {
   return lines.join('\n') + '\n'
 }
 
-export async function generateProject(programIds) {
+export async function generateProject(programIds, { includeTests = false } = {}) {
   const { order, results } = await generateApplication(programIds)
 
   const language = results.find(r => r.status === 'ok')?.language ?? 'typescript'
@@ -518,8 +672,33 @@ export async function generateProject(programIds) {
     }
   }
 
+  const typesResult = await generateProgramTypes(programIds)
+  files.push({ path: `src/types.${ext}`, content: typesResult.code })
   files.push({ path: `src/db.${ext}`,    content: generateDbStub(language) })
   files.push({ path: `src/index.${ext}`, content: generateIndex(results, language) })
+
+  if (includeTests) {
+    const settings = await getSettings()
+    const provider = await getProvider(settings)
+    for (const r of results) {
+      if (r.status !== 'ok') continue
+      try {
+        const { analysis, tableSchemas, wsConstants } = await loadProgramData(r.programId)
+        const epList = analysis.entry_points ?? []
+        const testFiles = []
+        for (const ep of epList) {
+          const testContext = buildTestGenContext({ name: r.programName }, analysis, ep, tableSchemas, wsConstants)
+          const testResult = await provider.generateTests(testContext)
+          if (testResult.testFile) testFiles.push(testResult.testFile)
+        }
+        if (testFiles.length) {
+          files.push({ path: `src/__tests__/${r.programName}.test.${ext}`, content: mergeTestFiles(testFiles) })
+        }
+      } catch {
+        warnings.push(`${r.programName}: test generation failed`)
+      }
+    }
+  }
 
   return { files, warnings, order }
 }

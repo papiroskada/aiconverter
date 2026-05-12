@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { fetchProgram, deleteProgram, triggerReanalyze } from '../../api/programs.js'
+import { useSSE } from '../../hooks/useSSE.js'
 import OverviewTab from './OverviewTab.jsx'
 import LogicTab from './LogicTab.jsx'
 import ConnectionsTab from './ConnectionsTab.jsx'
@@ -28,20 +29,63 @@ function ProgressUI({ step, total }) {
   )
 }
 
-export default function ProgramDetail({ programId, onClose, onNavigate, onDeleted, stepProgress = new Map(), refreshTrigger = 0 }) {
+export default function ProgramDetail({ programId, onClose, onNavigate, onDeleted, onAnalyzing, onReanalyzed, stepProgress = new Map(), refreshTrigger = 0 }) {
   const [program, setProgram] = useState(null)
   const [tab, setTab] = useState('Overview')
   const [deleting, setDeleting] = useState(false)
   const [reanalyzing, setReanalyzing] = useState(false)
   const [error, setError] = useState(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [sseActive, setSseActive] = useState(false)
+  const [localStepData, setLocalStepData] = useState(null)
   const exportRef = useRef(null)
+  const doneRef = useRef(false)
+  const onReanalyzedRef = useRef(onReanalyzed)
+  useEffect(() => { onReanalyzedRef.current = onReanalyzed })
+
+  useSSE(sseActive ? programId : null, (event, data) => {
+    if (event === 'progress' && data.stage === 'step') {
+      setLocalStepData({ step: data.step, total: data.total })
+    }
+    if (event === 'done' || event === 'failed') {
+      if (doneRef.current) return
+      doneRef.current = true
+      setSseActive(false)
+      setLocalStepData(null)
+      setReanalyzing(false)
+      fetchProgram(programId).then(setProgram).catch(console.error)
+      onReanalyzedRef.current?.()
+    }
+  })
+
+  // Polling fallback: re-fetch every 8s in case the SSE `done` event is missed
+  useEffect(() => {
+    if (!sseActive || !programId) return
+    doneRef.current = false
+    const id = setInterval(async () => {
+      if (doneRef.current) return
+      try {
+        const updated = await fetchProgram(programId)
+        if (updated.status !== 'analyzing') {
+          doneRef.current = true
+          setSseActive(false)
+          setLocalStepData(null)
+          setReanalyzing(false)
+          setProgram(updated)
+          onReanalyzedRef.current?.()
+        }
+      } catch { /* ignore */ }
+    }, 8000)
+    return () => clearInterval(id)
+  }, [sseActive, programId])
 
   useEffect(() => {
     if (!programId) return
     setProgram(null)
     setTab('Overview')
     setError(null)
+    setSseActive(false)
+    setLocalStepData(null)
     fetchProgram(programId).then(setProgram).catch(console.error)
   }, [programId])
 
@@ -80,9 +124,11 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
     setError(null)
     try {
       await triggerReanalyze(programId)
+      setProgram(prev => prev ? { ...prev, status: 'analyzing' } : prev)
+      setSseActive(true)
+      onAnalyzing?.(programId)
     } catch (err) {
       setError(err.message)
-    } finally {
       setReanalyzing(false)
     }
   }
@@ -100,7 +146,7 @@ export default function ProgramDetail({ programId, onClose, onNavigate, onDelete
     a.click()
   }
 
-  const stepData = stepProgress.get(programId)
+  const stepData = stepProgress.get(programId) ?? localStepData
   const isCodeTab = tab === 'Code'
 
   return (

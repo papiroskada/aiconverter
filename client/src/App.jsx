@@ -19,6 +19,7 @@ export default function App() {
   const [selectedAppId, setSelectedAppId] = useState(null)
   const [focusNodeId, setFocusNodeId] = useState(null)
   const [stepProgress, setStepProgress] = useState(new Map())
+  const [appsRefreshTrigger, setAppsRefreshTrigger] = useState(0)
 
   useAppSSE(batchAppId, (event, data) => {
     if (event === 'progress' && data.programId) {
@@ -45,6 +46,17 @@ export default function App() {
     if (!batchAppId) return
     try { await cancelApplication(batchAppId) } catch (err) { console.error('Batch cancel failed', err) }
   }, [batchAppId])
+
+  const handleAnalyzing = useCallback((programId) => {
+    markAnalyzing(programId)
+    refresh()
+  }, [markAnalyzing, refresh])
+
+  const handleReanalyzed = useCallback(async () => {
+    setPanelRefreshTrigger(t => t + 1)
+    setAppsRefreshTrigger(t => t + 1)
+    await refresh()
+  }, [refresh])
 
   const handleDeleted = useCallback(async (programId) => {
     if (selectedProgramId === programId) { setSelectedProgramId(null); setView('list') }
@@ -110,6 +122,7 @@ export default function App() {
         onBatchCancel={handleBatchCancel}
         onBatchStarted={handleBatchStarted}
         onDeleteApp={handleDeleteApp}
+        appsRefreshTrigger={appsRefreshTrigger}
       />
 
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
@@ -138,6 +151,8 @@ export default function App() {
             onClose={() => setView('list')}
             onNavigate={(id) => { setSelectedProgramId(id); setView('program') }}
             onDeleted={handleDeleted}
+            onAnalyzing={handleAnalyzing}
+            onReanalyzed={handleReanalyzed}
           />
         )}
         {view === 'program' && !selectedProgramId && (

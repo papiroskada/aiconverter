@@ -262,6 +262,39 @@ Rules:
 - imports: include only what the generated code actually uses
 `
 
+export const TEST_GENERATION_PROMPT = (context) => `
+You are generating Vitest unit tests for a TypeScript async function converted from COBOL.
+
+${context}
+
+Return ONLY valid JSON matching this schema exactly:
+{
+  "testFile": "the complete test file content as a string",
+  "coverage": ["description of scenario 1", "description of scenario 2"]
+}
+
+Rules:
+- Begin testFile with these exact lines (replace PROGRAMNAME with the value from the PROGRAM line, functionName with camelCase of the entry point businessName):
+  import { vi, describe, test, expect, beforeEach } from 'vitest'
+  vi.mock('../db.js', () => ({ db: { select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn() } }))
+  vi.mock('../callProgram.js', () => ({ callProgram: vi.fn() }))
+  import { db } from '../db.js'
+  import { functionName } from '../PROGRAMNAME.js'
+- Write one describe block: describe('PROGRAMNAME — businessName', () => { ... })
+- Add beforeEach(() => vi.clearAllMocks()) as the first statement inside describe
+- Write tests in this order:
+  1. Input validation — for each ERROR CATALOG entry mentioned in STEPS as a condition on blank/zero/invalid input: one test that passes invalid input and expects result to contain { error: N }
+  2. DB not-found scenarios — for each DB OPERATION entry:
+     - notFoundAction type "error": vi.mocked(db.select).mockResolvedValueOnce(null), expect result to contain { error: code }
+     - notFoundAction type "defaults": vi.mocked(db.select).mockResolvedValueOnce(null), then assert the exact field values from notFoundAction.fields on the result and no error property
+     - notFoundAction type "continue": vi.mocked(db.select).mockResolvedValueOnce(null), expect no error property
+  3. Happy path — vi.mocked(db.select).mockResolvedValue({}) with at least one field from DB TABLE SCHEMAS, expect no error property on result
+- For ordered db calls use mockResolvedValueOnce sequentially in the order DB OPERATIONS appear
+- Use camelCase field names from INPUT/OUTPUT PARAMETERS for function arguments and assertions
+- Use ONLY error codes from ERROR CATALOG — never invent codes not listed
+- Do not add test scenarios not derivable from the context above
+`
+
 export const C_ANALYZE_ENTRY_POINT_PROMPT = (condition, businessName, context) => `
 You are a C expert analyzing one specific operation of a legacy CAPI service for TypeScript/JavaScript rewrite documentation.
 

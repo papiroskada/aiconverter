@@ -5,7 +5,7 @@ import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag, patchEntryPoints } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPoint, generateProgram, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGenerationService.js'
+import { generateEntryPoint, generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGenerationService.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 
@@ -16,6 +16,16 @@ import pool from '../db/client.js'
 
 // SSE emitter registry: programId → Set of response objects
 const sseEmitters = new Map()
+
+// POST /api/programs/program-types
+router.post('/program-types', async (req, res, next) => {
+  try {
+    const { programIds } = req.body
+    if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
+    const result = await generateProgramTypes(programIds)
+    res.json(result)
+  } catch (err) { next(err) }
+})
 
 // POST /api/programs/db-types
 router.post('/db-types', async (req, res, next) => {
@@ -46,7 +56,7 @@ router.post('/application/:appId/generate-project', async (req, res, next) => {
     )
     const programIds = rows.map(r => r.program_id)
     if (!programIds.length) return res.status(422).json({ error: 'No programs in application' })
-    const result = await generateProject(programIds)
+    const result = await generateProject(programIds, { includeTests: req.body.includeTests ?? false })
     res.json(result)
   } catch (err) { next(err) }
 })
@@ -197,17 +207,26 @@ router.post('/:id/analyze', async (req, res) => {
 // POST /api/programs/:id/generate
 router.post('/:id/generate', async (req, res) => {
   try {
-    const result = await generateEntryPoint(req.params.id, req.body.condition ?? null)
+    const { condition = null, includeTests = false } = req.body ?? {}
+    const result = await generateEntryPoint(req.params.id, condition, { includeTests })
     res.json(result)
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }
 })
 
+// POST /api/programs/:id/generate-tests  — standalone test generation for one entry point
+router.post('/:id/generate-tests', async (req, res, next) => {
+  try {
+    const result = await generateEntryPointTests(req.params.id, req.body.condition ?? null)
+    res.json(result)
+  } catch (err) { next(err) }
+})
+
 // POST /api/programs/:id/generate-program
 router.post('/:id/generate-program', async (req, res, next) => {
   try {
-    const result = await generateProgram(req.params.id)
+    const result = await generateProgram(req.params.id, { includeTests: req.body?.includeTests ?? false })
     res.json(result)
   } catch (err) { next(err) }
 })

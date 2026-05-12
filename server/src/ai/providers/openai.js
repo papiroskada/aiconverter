@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT, CODE_GENERATION_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT, CODE_GENERATION_PROMPT, PROGRAM_GENERATION_PROMPT, TEST_GENERATION_PROMPT } from '../prompts.js'
 
 export class OpenAIProvider extends BaseProvider {
   constructor(config = {}) {
@@ -33,5 +33,13 @@ export class OpenAIProvider extends BaseProvider {
 
   async generateCode(context, signal) {
     return this.#callOpenAI(CODE_GENERATION_PROMPT(context), 8000, this.modelMain, signal)
+  }
+
+  async generateProgram(context, patterns, signal) {
+    return this.#callOpenAI(PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
+  }
+
+  async generateTests(context, signal) {
+    return this.#callOpenAI(TEST_GENERATION_PROMPT(context), 4096, this.modelDetail, signal)
   }
 }

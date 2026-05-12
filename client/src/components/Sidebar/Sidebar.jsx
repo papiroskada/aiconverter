@@ -294,6 +294,7 @@ export default function Sidebar({
   onBatchCancel,
   onBatchStarted,
   onDeleteApp,
+  appsRefreshTrigger = 0,
 }) {
   const [applications, setApplications] = useState([])
   const [folderFiles, setFolderFiles] = useState(null)
@@ -314,6 +315,11 @@ export default function Sidebar({
   }, [])
 
   useEffect(() => { loadApps() }, [loadApps])
+
+  useEffect(() => {
+    if (appsRefreshTrigger === 0) return
+    loadApps()
+  }, [appsRefreshTrigger, loadApps])
 
   // Refresh apps list when batch finishes (batchAppId goes from set → null)
   const prevBatchAppId = useRef(batchAppId)
