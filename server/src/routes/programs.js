@@ -5,7 +5,7 @@ import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag, patchEntryPoints } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPoint, generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGenerationService.js'
+import { generateEntryPoint, generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 
