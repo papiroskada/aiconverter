@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT, CODE_GENERATION_PROMPT, PROGRAM_GENERATION_PROMPT, TEST_GENERATION_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, PROGRAM_GENERATION_PROMPT, HOLE_FILL_PROMPT } from '../prompts.js'
 
 export class OpenAIProvider extends BaseProvider {
   constructor(config = {}) {
@@ -11,35 +11,26 @@ export class OpenAIProvider extends BaseProvider {
     this.modelDetail = config.openai_model_rules     || process.env.OPENAI_MODEL_RULES     || 'gpt-4o-mini'
   }
 
-  async #callOpenAI(prompt, maxTokens, model, signal) {
-    const completion = await this.client.chat.completions.create(
-      { model, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] },
-      { signal }
-    )
+  async #callOpenAI(prompt, maxTokens, model, signal, temperature) {
+    const params = { model, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] }
+    if (temperature !== undefined) params.temperature = temperature
+    const completion = await this.client.chat.completions.create(params, { signal })
     return JSON.parse(completion.choices[0].message.content)
   }
 
-  async extractBusinessAnalysis(context, signal, lang = 'cobol') {
-    const prompt = lang === 'c' ? C_BUSINESS_ANALYSIS_PROMPT(context) : BUSINESS_ANALYSIS_PROMPT(context)
-    return this.#callOpenAI(prompt, 8000, this.modelMain, signal)
+  async extractBusinessAnalysis(context, signal) {
+    return this.#callOpenAI(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
   }
 
-  async analyzeEntryPoint(condition, businessName, context, signal, lang = 'cobol') {
-    const prompt = lang === 'c'
-      ? C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
-      : ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
-    return this.#callOpenAI(prompt, 4096, this.modelDetail, signal)
-  }
-
-  async generateCode(context, signal) {
-    return this.#callOpenAI(CODE_GENERATION_PROMPT(context), 8000, this.modelMain, signal)
+  async analyzeEntryPoint(condition, businessName, context, signal) {
+    return this.#callOpenAI(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
   }
 
   async generateProgram(context, patterns, signal) {
     return this.#callOpenAI(PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
   }
 
-  async generateTests(context, signal) {
-    return this.#callOpenAI(TEST_GENERATION_PROMPT(context), 4096, this.modelDetail, signal)
+  async fillHole(holeContext, signal) {
+    return this.#callOpenAI(HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
   }
 }

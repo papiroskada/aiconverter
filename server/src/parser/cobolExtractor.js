@@ -315,11 +315,52 @@ function paraVerbToOp(verbPart) {
   }[firstToken]
 }
 
-function picToJsType(pic) {
+function picToJsType(pic, comp) {
   if (!pic) return 'object'
+  if (comp === 'COMP-3') return 'Decimal'
+  if (comp === 'COMP-5' || comp === 'COMP') return 'number'
   if (/^X/i.test(pic)) return 'string'
   if (/^[S9]/i.test(pic)) return 'number'
   return 'string'
+}
+
+export function buildPicTypeMap(wsVars, linkageVars) {
+  const map = {}
+  for (const v of [...wsVars, ...linkageVars]) {
+    if (v.pic) map[v.name] = picToJsType(v.pic, v.comp)
+  }
+  return map
+}
+
+export function extractDataFlow(paragraphChunks) {
+  const flow = {}
+  for (const chunk of paragraphChunks) {
+    const name = (chunk.name ?? chunk.paragraph_name)?.toUpperCase()
+    if (!name) continue
+    const text = chunk.cobol_text ?? ''
+    const reads = new Set()
+    const writes = new Set()
+
+    const moveRe = /\bMOVE\s+([A-Z][A-Z0-9-]+)\s+TO\s+([A-Z][A-Z0-9-]+)/gi
+    let m
+    while ((m = moveRe.exec(text)) !== null) {
+      reads.add(m[1].toUpperCase())
+      writes.add(m[2].toUpperCase())
+    }
+
+    const computeRe = /\bCOMPUTE\s+([A-Z][A-Z0-9-]+)\s*=/gi
+    while ((m = computeRe.exec(text)) !== null) {
+      writes.add(m[1].toUpperCase())
+    }
+
+    const addRe = /\bADD\s+\S+\s+TO\s+([A-Z][A-Z0-9-]+)/gi
+    while ((m = addRe.exec(text)) !== null) {
+      writes.add(m[1].toUpperCase())
+    }
+
+    flow[name] = { reads: [...reads], writes: [...writes] }
+  }
+  return flow
 }
 
 // Extracts VALUE-initialized WS fields that represent named business constants
@@ -339,7 +380,12 @@ export function extractWsConstants(cobolText) {
     const idx = upper.indexOf(p, wsStart + 22)
     if (idx !== -1 && idx < wsEnd) wsEnd = idx
   }
-  const wsText = cobolText.slice(wsStart, wsEnd)
+  // Strip sequence numbers and identification area for fixed-format files
+  const rawLines = cobolText.slice(wsStart, wsEnd).split('\n')
+  const isFixed = rawLines.some(l => /^\d{6}/.test(l))
+  const wsText = isFixed
+    ? rawLines.map(l => l.length > 6 ? l.substring(6, 72) : '').join('\n')
+    : cobolText.slice(wsStart, wsEnd)
 
   const result = []
   // Match: level FIELD-NAME PIC type VALUE "literal"

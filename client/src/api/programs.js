@@ -108,6 +108,12 @@ export async function generateProgramTypes(programIds) {
   return res.json()
 }
 
+export async function getGeneratedCode(id) {
+  const res = await fetch(`${BASE}/${id}/generated-code`)
+  if (!res.ok) throw new Error('Failed to fetch cached code')
+  return res.json()
+}
+
 export async function generateApplicationCode(appId) {
   const res = await fetch(`${BASE}/application/${appId}/generate`, { method: 'POST' })
   if (!res.ok) {

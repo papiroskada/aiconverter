@@ -42,44 +42,6 @@ function interfaceSection(programName) {
   return `\nTYPESCRIPT INTERFACES (use for function signature, import from './types.js'):\n  Input:  ${inputType}\n  Output: ${outputType}`
 }
 
-export function buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants) {
-  const errorList = (analysis.error_catalog ?? [])
-    .map(e => `  ${e.code}${e.businessMeaning ? ` — ${e.businessMeaning}` : ''}${e.systemAction ? `; ${e.systemAction}` : ''}`)
-    .join('\n') || '  (none)'
-
-  const steps = (ep.steps ?? []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  (none)'
-
-  const epDbTables = (ep.dbOperations?.length ? ep.dbOperations : analysis.db_tables ?? []).filter(t => !t.ai_hallucinated)
-  const dbOps = epDbTables.map(t => {
-    const keys = t.keyFields?.length ? `; key: ${t.keyFields.join(', ')}` : ''
-    const nfText = formatNotFoundAction(t.notFoundAction)
-    const nf = nfText ? `; if not found: ${nfText}` : ''
-    const header = `  ${t.table} (${t.operation}${keys}${nf})`
-    const fields = tableSchemas[t.table]
-    if (!fields?.length) return header
-    const fieldLines = fields.map(f => `    ${f.name} → ${f.camelName} (${f.type})`).join('\n')
-    return `${header}\n${fieldLines}`
-  }).join('\n\n') || '  (none)'
-
-  const stepsText = (ep.steps ?? []).join(' ').toUpperCase()
-  const referencedConstants = (wsConstants ?? []).filter(c => stepsText.includes(c.name))
-  const wsConstantsList = referencedConstants.length
-    ? referencedConstants.map(c => `  ${c.name} = "${c.value}" (js: ${c.camelName})`).join('\n')
-    : '  (none)'
-
-  return [
-    `PROGRAM: ${program.name}`,
-    `PURPOSE: ${analysis.business_purpose ?? '(unknown)'}`,
-    `\nINPUT PARAMETERS:\n${formatParams(analysis.input_contract)}`,
-    `\nOUTPUT PARAMETERS:\n${formatParams(analysis.output_contract)}`,
-    `\nWS CONSTANTS:\n${wsConstantsList}`,
-    `\nERROR CATALOG:\n${errorList}`,
-    `\nENTRY POINT: ${ep.businessName} (when ${ep.condition})`,
-    `STEPS:\n${steps}`,
-    `\nDB TABLE SCHEMAS:\n${dbOps}`,
-  ].join('\n')
-}
-
 export function buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings) {
   const ep = analysis._selectedEntryPoint
 

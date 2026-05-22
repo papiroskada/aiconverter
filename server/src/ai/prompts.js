@@ -115,114 +115,6 @@ Rules:
 - For table reads: describe what happens after (conditional errors, fallback reads, field derivation)
 `
 
-export const C_BUSINESS_ANALYSIS_PROMPT = (context) => `
-You are a C expert analyzing a legacy CAPI service module to document its business logic for TypeScript/JavaScript rewrite.
-
-${context}
-
-Return ONLY valid JSON matching this schema exactly:
-{
-  "businessPurpose": "one sentence: what business problem this service solves",
-  "parameters": [
-    {
-      "name": "camelCaseName",
-      "cobolName": "ORIGINAL_FIELD_NAME",
-      "type": "string|number|boolean|object",
-      "direction": "in|out|inout",
-      "description": "business meaning of this parameter"
-    }
-  ],
-  "entryPoints": [
-    {
-      "condition": "mode value that activates this operation e.g. prs_md='F', or 'always'",
-      "businessName": "human-readable operation name e.g. Fetch Records",
-      "paragraphNames": ["FUNCTION_NAME_1", "FUNCTION_NAME_2"],
-      "steps": ["ordered business action 1", "ordered business action 2"],
-      "sideEffects": ["what changes: updates TABLE-X", "calls service Y"],
-      "returns": "what output fields are populated on success",
-      "errors": ["ERROR-CODE: business meaning and consequence"],
-      "dbOperations": [
-        {
-          "table": "table-name",
-          "operation": "SGE|RDN|UPD|DEL|INL",
-          "keyFields": ["key-field-used-in-lookup"],
-          "notFoundAction": { "type": "error", "code": 1500 }
-        }
-      ]
-    }
-  ],
-  "errorCatalog": [
-    {
-      "code": "numeric error code as string",
-      "businessMeaning": "what this error means for the business process",
-      "systemAction": "what the service does when this error occurs"
-    }
-  ],
-  "externalDependencies": [
-    {
-      "program": "CALLED-SERVICE-NAME",
-      "purpose": "why this service is called in business terms",
-      "dataIn": "what data is passed to it",
-      "dataOut": "what data comes back"
-    }
-  ],
-  "dbTables": [
-    {
-      "table": "table-name",
-      "operation": "SGE|RDN|UPD|DEL|INL",
-      "fields": ["field-name"],
-      "keyFields": ["key-field-used-in-lookup"],
-      "notFoundAction": { "type": "error", "code": 1500 }
-    }
-  ],
-  "fileIO": []
-}
-
-Rules:
-- businessPurpose: one sentence, business domain language, not C code terms
-- parameters: use INPUT FIELDS and OUTPUT FIELDS sections — derive direction from field name suffix (InpRec = in, OutRec = out); infer JS type: char array = string, int = number
-- entryPoints: use MODE DISPATCH — each case is one entry point; if MODE DISPATCH is (none) create one entry with condition "always"
-- entryPoints[].paragraphNames: list ALL function names for this mode including PRE-DISPATCH FUNCTIONS
-- entryPoints[].steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init — listed in context), then mode-specific steps; each step must name the specific fields, values, and conditions involved — e.g. "Reads exreur with key eur_exec_lgn_id; if not found, returns error 1500" not "validates user"; include actual error codes, field names, and conditional branches; each step that reads a DB table must reference the notFoundAction behavior inline — e.g. "RDN exrcdv with key cdv_macaddr; if not found: set defaults and continue (log error)" not "Read CDV record"
-- errorCatalog: use ERROR CALLS — each entry has code and field pre-extracted; add businessMeaning and systemAction from code context; include ONLY codes explicitly set in the C source (assignment to output status field with a literal number) — never include generic codes like 9999 unless they appear literally in the code
-- externalDependencies: use SERVICE CALLS — only meaningful business calls; exclude c_xxx utility calls (c_writelnkarea, c_fmtShrtDate, c_getdatetm etc.)
-- dbTables: use DATABASE CALLS (svcCallPlnsqlio) — table and operations pre-extracted; for each call also capture: keyFields = fields passed as lookup key; notFoundAction = structured object — read the function to determine which applies: { "type": "error", "code": N } stops with error; { "type": "defaults", "fields": { "field": value }, "logError": bool } sets fields and continues; { "type": "continue" } falls through; { "type": "skip" } conditionally skipped; do NOT guess from error catalog; INL/UPD/DEL → notFoundAction null
-- entryPoints[].dbOperations: list ONLY tables touched by this entry point's functions (including pre-dispatch); same notFoundAction structured object logic as dbTables; INL/UPD/DEL → notFoundAction null; return [] if none
-- fileIO: always []
-
-Analysis discipline:
-- Function names are labels — pvtValidateAccess in one service checks branches, in another reads different tables; always base analysis on actual function code
-- For each DB table read (RDN), consider what happens after: conditional error? fallback read? field derivation?
-- PRE-DISPATCH FUNCTIONS run before every mode — their logic applies to ALL entry points
-`
-
-export const CODE_GENERATION_PROMPT = (context) => `
-You are a legacy COBOL/C to TypeScript expert. Convert the operation described below into a modern async function.
-
-${context}
-
-Return ONLY valid JSON matching this schema exactly:
-{
-  "functionName": "camelCase function name derived from the operation name",
-  "code": "complete async function — self-contained, no placeholders",
-  "notes": ["any assumption or decision worth explaining to a reviewer"]
-}
-
-Rules:
-- Derive logic from STEPS and DB OPERATIONS — COBOL SOURCE PARAGRAPHS may or may not be present; if absent, implement strictly from steps, dbOperations, and notFoundAction
-- Implement every branch, condition, and error case from the steps — do not skip or summarize
-- Parameters: use camelCase names matching INPUT/OUTPUT PARAMETERS (EUR-EXEC-LGN-ID → eurExecLgnId)
-- WS CONSTANTS: use the exact values listed — never invent placeholder strings
-- DB reads: use the DB READ pattern from context; use field names from DB TABLE SCHEMAS; handle not-found exactly per notFoundAction — { type: error } → return/throw error; { type: defaults } → set the specified fields and continue; { type: continue } → continue normally; { type: skip } → skip operation
-- DB writes: use the DB WRITE pattern from context
-- External calls: use the EXTERNAL CALL pattern from context — destructure result
-- Errors: use the ERROR pattern from context; use ONLY codes from ERROR CATALOG — never invent codes not listed
-- Boolean conditions: translate literally — AND stays AND, OR stays OR; do not simplify
-- Pre-dispatch paragraphs run first, then entry-point-specific logic
-- Do not add try/catch blocks not present in the source — only catch what is explicitly handled
-- Do not abbreviate or skip logic — the goal is a complete, runnable implementation
-`
-
 export const PROGRAM_GENERATION_PROMPT = (context, patterns) => `
 You are a legacy COBOL/C to ${patterns.language} expert. Generate a complete ${patterns.language} module for the program described below.
 
@@ -262,68 +154,39 @@ Rules:
 - imports: include only what the generated code actually uses
 `
 
-export const TEST_GENERATION_PROMPT = (context) => `
-You are generating Vitest unit tests for a TypeScript async function converted from COBOL.
+export const HOLE_FILL_PROMPT = (ctx) => `
+You are converting COBOL business logic to TypeScript. Fill in ONE missing section of an already-generated TypeScript skeleton.
 
-${context}
+SURROUNDING TYPESCRIPT CONTEXT (do not change — for reference only):
+\`\`\`typescript
+${ctx.surroundingCode}
+\`\`\`
 
-Return ONLY valid JSON matching this schema exactly:
+RELEVANT COBOL SOURCE (only paragraphs for this section):
+\`\`\`cobol
+${ctx.cobolText}
+\`\`\`
+
+SECTION METADATA:
+- Pattern: ${ctx.pattern}
+- Reads from: ${ctx.reads.join(', ') || 'none'}
+- Writes to:  ${ctx.writes.join(', ') || 'none'}
+${ctx.tableSchemas ? `\nDB TABLE FIELDS (camelCase names to use in queries):\n${ctx.tableSchemas}` : ''}
+TARGET PATTERNS — use exactly:
+- DB read:  ${ctx.patterns.dbRead}
+- DB write: ${ctx.patterns.dbWrite}
+- Error:    ${ctx.patterns.errorConvention}
+
+Return ONLY valid JSON:
 {
-  "testFile": "the complete test file content as a string",
-  "coverage": ["description of scenario 1", "description of scenario 2"]
+  "code": "the TypeScript statements to place inside the function body (no function wrapper, no return output at the end)"
 }
 
 Rules:
-- Begin testFile with these exact lines (replace PROGRAMNAME with the value from the PROGRAM line, functionName with camelCase of the entry point businessName):
-  import { vi, describe, test, expect, beforeEach } from 'vitest'
-  vi.mock('../db.js', () => ({ db: { select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn() } }))
-  vi.mock('../callProgram.js', () => ({ callProgram: vi.fn() }))
-  import { db } from '../db.js'
-  import { functionName } from '../PROGRAMNAME.js'
-- Write one describe block: describe('PROGRAMNAME — businessName', () => { ... })
-- Add beforeEach(() => vi.clearAllMocks()) as the first statement inside describe
-- Write tests in this order:
-  1. Input validation — for each ERROR CATALOG entry mentioned in STEPS as a condition on blank/zero/invalid input: one test that passes invalid input and expects result to contain { error: N }
-  2. DB not-found scenarios — for each DB OPERATION entry:
-     - notFoundAction type "error": vi.mocked(db.select).mockResolvedValueOnce(null), expect result to contain { error: code }
-     - notFoundAction type "defaults": vi.mocked(db.select).mockResolvedValueOnce(null), then assert the exact field values from notFoundAction.fields on the result and no error property
-     - notFoundAction type "continue": vi.mocked(db.select).mockResolvedValueOnce(null), expect no error property
-  3. Happy path — vi.mocked(db.select).mockResolvedValue({}) with at least one field from DB TABLE SCHEMAS, expect no error property on result
-- For ordered db calls use mockResolvedValueOnce sequentially in the order DB OPERATIONS appear
-- Use camelCase field names from INPUT/OUTPUT PARAMETERS for function arguments and assertions
-- Use ONLY error codes from ERROR CATALOG — never invent codes not listed
-- Do not add test scenarios not derivable from the context above
-`
-
-export const C_ANALYZE_ENTRY_POINT_PROMPT = (condition, businessName, context) => `
-You are a C expert analyzing one specific operation of a legacy CAPI service for TypeScript/JavaScript rewrite documentation.
-
-Operation: ${businessName} (triggered when ${condition})
-
-${context}
-
-Return ONLY valid JSON matching this schema exactly:
-{
-  "steps": ["ordered business action 1", "ordered business action 2"],
-  "sideEffects": ["what changes in the system"],
-  "returns": "what output fields or status are set on success",
-  "errors": ["ERROR-CODE: business meaning and consequence"],
-  "dbOperations": [
-    {
-      "table": "table-name",
-      "operation": "SGE|RDN|UPD|DEL|INL",
-      "keyFields": ["key-field-used-in-lookup"],
-      "notFoundAction": { "type": "error", "code": 1500 }
-    }
-  ]
-}
-
-Rules:
-- steps: start with PRE-DISPATCH FUNCTIONS logic (validation, init from context) — these run before this operation; then operation-specific logic; each step must name the specific fields, values, and conditions involved — e.g. "Reads exreur with key eur_exec_lgn_id; if not found, returns error 1500"; include actual error codes, field names, and conditional branches; each step that reads a DB table must reference the notFoundAction behavior inline — e.g. "RDN exrcdv with key cdv_macaddr; if not found: set defaults and continue (log error)" not "Read CDV record"
-- sideEffects: every DB change, service call triggered, output field populated
-- returns: which output fields are set, what status code
-- errors: reference ERROR CALLS from context — use actual codes from the list
-- dbOperations: list ONLY tables touched by this entry point's functions (including pre-dispatch); keyFields = fields in WHERE/lookup; notFoundAction = structured object — read the function to determine: { "type": "error", "code": N } stops; { "type": "defaults", "fields": { "field": value }, "logError": bool } sets fields and continues; { "type": "continue" } falls through; { "type": "skip" } conditionally skipped; do NOT guess from error catalog; INL/UPD/DEL → notFoundAction null; return [] if none
-- Function names are labels: base analysis on actual function code, not the name
-- For DB reads: describe what happens after (conditional errors, fallback, field derivation)
+- Implement the COBOL logic from the source above — do not invent logic not present in the source
+- Use async/await for all DB operations
+- Use camelCase field names (e.g. CLURI-PRS-MD → cluriPrsMd)
+- Do not wrap in a function definition — return only the body statements
+- Do not add the final \`return output\` — it already exists in the skeleton
+- No try/catch unless explicitly in the COBOL source
 `

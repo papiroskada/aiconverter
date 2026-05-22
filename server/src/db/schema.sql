@@ -144,3 +144,11 @@ ALTER TABLE settings
   ADD COLUMN IF NOT EXISTS code_external_call     TEXT,
   ADD COLUMN IF NOT EXISTS code_language          TEXT NOT NULL DEFAULT 'typescript',
   ADD COLUMN IF NOT EXISTS code_source_mode       TEXT NOT NULL DEFAULT 'with_source';
+
+-- Cache last generated code per program
+ALTER TABLE program_analysis
+  ADD COLUMN IF NOT EXISTS generated_code     TEXT,
+  ADD COLUMN IF NOT EXISTS generated_tests    TEXT,
+  ADD COLUMN IF NOT EXISTS generated_language TEXT,
+  ADD COLUMN IF NOT EXISTS generated_notes    TEXT,
+  ADD COLUMN IF NOT EXISTS generated_at       TIMESTAMP;

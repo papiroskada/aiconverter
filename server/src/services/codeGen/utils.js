@@ -16,17 +16,6 @@ export function assembleCode(result) {
   return parts.filter(Boolean).join('\n\n')
 }
 
-export function mergeTestFiles(files) {
-  if (!files.length) return ''
-  if (files.length === 1) return files[0]
-  const parts = [files[0]]
-  for (let i = 1; i < files.length; i++) {
-    const match = files[i].match(/^describe\(/m)
-    if (match) parts.push(files[i].slice(match.index))
-  }
-  return parts.join('\n\n')
-}
-
 export function getPatterns(settings) {
   return {
     language:        settings.code_language          ?? 'typescript',

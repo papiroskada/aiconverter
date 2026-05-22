@@ -63,6 +63,27 @@ export async function patchEntryPoints(program_id, entry_points) {
   return rows[0]?.entry_points
 }
 
+export async function saveGeneratedCode(program_id, { code, tests, language, notes }) {
+  await pool.query(
+    `UPDATE program_analysis
+     SET generated_code = $2, generated_tests = $3, generated_language = $4,
+         generated_notes = $5, generated_at = NOW()
+     WHERE program_id = $1`,
+    [program_id, code ?? null, tests ?? null, language ?? null, notes ?? null]
+  )
+}
+
+export async function getGeneratedCode(program_id) {
+  const { rows } = await pool.query(
+    `SELECT generated_code, generated_tests, generated_language, generated_notes, generated_at
+     FROM program_analysis WHERE program_id = $1`,
+    [program_id]
+  )
+  const row = rows[0]
+  if (!row || !row.generated_code) return null
+  return row
+}
+
 export async function updateFlag(program_id, condition, flag) {
   if (flag === null) {
     const { rows } = await pool.query(

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { BaseProvider } from './base.js'
-import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, C_BUSINESS_ANALYSIS_PROMPT, C_ANALYZE_ENTRY_POINT_PROMPT, CODE_GENERATION_PROMPT, PROGRAM_GENERATION_PROMPT, TEST_GENERATION_PROMPT } from '../prompts.js'
+import { BUSINESS_ANALYSIS_PROMPT, ANALYZE_ENTRY_POINT_PROMPT, PROGRAM_GENERATION_PROMPT, HOLE_FILL_PROMPT } from '../prompts.js'
 
 export class ClaudeProvider extends BaseProvider {
   constructor(config = {}) {
@@ -11,37 +11,28 @@ export class ClaudeProvider extends BaseProvider {
     this.modelDetail = config.claude_model_rules     || process.env.CLAUDE_MODEL_RULES     || 'claude-haiku-4-5-20251001'
   }
 
-  async #callClaude(prompt, maxTokens, model, signal) {
-    const message = await this.client.messages.create(
-      { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] },
-      { signal }
-    )
+  async #callClaude(prompt, maxTokens, model, signal, temperature) {
+    const params = { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+    if (temperature !== undefined) params.temperature = temperature
+    const message = await this.client.messages.create(params, { signal })
     const text = message.content[0].text.trim()
     const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     return JSON.parse(cleaned)
   }
 
-  async extractBusinessAnalysis(context, signal, lang = 'cobol') {
-    const prompt = lang === 'c' ? C_BUSINESS_ANALYSIS_PROMPT(context) : BUSINESS_ANALYSIS_PROMPT(context)
-    return this.#callClaude(prompt, 8000, this.modelMain, signal)
+  async extractBusinessAnalysis(context, signal) {
+    return this.#callClaude(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
   }
 
-  async analyzeEntryPoint(condition, businessName, context, signal, lang = 'cobol') {
-    const prompt = lang === 'c'
-      ? C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
-      : ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)
-    return this.#callClaude(prompt, 4096, this.modelDetail, signal)
-  }
-
-  async generateCode(context, signal) {
-    return this.#callClaude(CODE_GENERATION_PROMPT(context), 8000, this.modelMain, signal)
+  async analyzeEntryPoint(condition, businessName, context, signal) {
+    return this.#callClaude(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
   }
 
   async generateProgram(context, patterns, signal) {
     return this.#callClaude(PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
   }
 
-  async generateTests(context, signal) {
-    return this.#callClaude(TEST_GENERATION_PROMPT(context), 4096, this.modelDetail, signal)
+  async fillHole(holeContext, signal) {
+    return this.#callClaude(HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
   }
 }

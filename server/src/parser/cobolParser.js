@@ -109,9 +109,13 @@ export function parseCobol(cobolText) {
 
   const fixedFormat = detectFixedFormat(lines)
 
-  // parseLine returns the matchable content of a line (sequence-stripped if needed)
+  // parseLine returns the matchable content of a line:
+  // for fixed format strips sequence (cols 1-6) AND identification area (cols 73+)
+  // so that identification area tokens like "EXYCLU.S" or "SCCLOOP." are not
+  // mistaken for paragraph names
   function parseLine(line) {
-    return fixedFormat ? stripSequenceNumber(line) : line
+    if (!fixedFormat) return line
+    return line.length > 6 ? line.substring(6, 72) : ''
   }
 
   let inData = false
@@ -210,6 +214,37 @@ function inferDirection(fieldName) {
   return m[1].toUpperCase() === 'I' ? 'in' : 'out'
 }
 
+function parseComp(line) {
+  if (/\bCOMP-5\b/i.test(line)) return 'COMP-5'
+  if (/\bCOMP-3\b/i.test(line)) return 'COMP-3'
+  if (/\bCOMP\b/i.test(line)) return 'COMP'
+  return null
+}
+
+function parseRedefines(line) {
+  const m = line.match(/\bREDEFINES\s+([A-Z][A-Z0-9-]+)/i)
+  return m ? m[1].toUpperCase() : null
+}
+
+function parse88Values(rawStr) {
+  const clean = rawStr.trim().replace(/\.$/, '')
+  const values = []
+  const re = /["']([^"']+)["'](?:\s+THRU\s+["']([^"']+)["'])?/gi
+  let m
+  while ((m = re.exec(clean)) !== null) {
+    if (m[2]) values.push({ from: m[1], to: m[2] })
+    else values.push({ value: m[1] })
+  }
+  if (values.length === 0) {
+    const numRe = /(\d+)(?:\s+THRU\s+(\d+))?/g
+    while ((m = numRe.exec(clean)) !== null) {
+      if (m[2]) values.push({ from: m[1], to: m[2] })
+      else values.push({ value: m[1] })
+    }
+  }
+  return values
+}
+
 function extractSectionVars(cobolText, sectionHeader, stopPatterns, withDirection = false) {
   try {
     const lines = cobolText.split('\n')
@@ -232,7 +267,7 @@ function extractSectionVars(cobolText, sectionHeader, stopPatterns, withDirectio
       if (cond88 && currentVar) {
         currentVar.conditions.push({
           name: cond88[1].toUpperCase(),
-          value: cond88[2].trim().replace(/\.$/, ''),
+          values: parse88Values(cond88[2]),
         })
         continue
       }
@@ -244,6 +279,8 @@ function extractSectionVars(cobolText, sectionHeader, stopPatterns, withDirectio
           level: varMatch[1].padStart(2, '0'),
           name,
           pic: varMatch[3] ? varMatch[3].replace(/\.$/, '') : null,
+          comp: parseComp(parsed),
+          redefines: parseRedefines(parsed),
           conditions: [],
           ...(withDirection ? { direction: inferDirection(name) } : {}),
         }
@@ -269,11 +306,43 @@ export function extractLinkageVars(cobolText) {
   ], true)
 }
 
+function cobolToCamel(name) {
+  return name.toLowerCase().replace(/-+(.)/g, (_, c) => c.toUpperCase())
+}
+
+export function extractEnumCandidates(wsVars, linkageVars) {
+  const candidates = []
+  for (const v of [...wsVars, ...linkageVars]) {
+    if (!v.conditions || v.conditions.length === 0) continue
+    const allSimple = v.conditions.every(c =>
+      c.values.length > 0 && c.values.every(val => val.value !== undefined)
+    )
+    if (!allSimple) continue
+    candidates.push({
+      parentField: v.name,
+      parentPic: v.pic ?? null,
+      tsName: cobolToCamel(v.name),
+      values: v.conditions.map(c => ({
+        name: c.name,
+        tsName: c.name.replace(/-/g, '_'),
+        value: c.values[0]?.value ?? '',
+      })),
+    })
+  }
+  return candidates
+}
+
+export function extractRedefinesMap(wsVars, linkageVars) {
+  return [...wsVars, ...linkageVars]
+    .filter(v => v.redefines !== null)
+    .map(v => ({ field: v.name, redefines: v.redefines, level: v.level, pic: v.pic, comp: v.comp }))
+}
+
 export function extractEvaluateDispatch(cobolText) {
   try {
     const lines = cobolText.split('\n')
     const fixedFormat = detectFixedFormat(lines)
-    const normalised = lines.map(l => fixedFormat ? stripSequenceNumber(l) : l)
+    const normalised = lines.map(l => fixedFormat ? (l.length > 6 ? l.substring(6, 72) : '') : l)
 
     const result = []
 
@@ -371,6 +440,13 @@ export function extractPerformGraph(paragraphChunks) {
     while ((m = re.exec(chunk.cobol_text)) !== null) {
       const target = m[1].toUpperCase()
       if (!PERFORM_KEYWORDS.has(target)) performed.add(target)
+    }
+
+    // Third pass: GO TO X — covers SCCLOOP-style loops and other GO TO-based control flow
+    // (Invera scope: SCCLOOP copybook uses GO TO for loop-back and loop-end jumps)
+    const gotoRe = /\bGO\s+TO\s+([A-Z][A-Z0-9-]+)/gi
+    while ((m = gotoRe.exec(chunk.cobol_text)) !== null) {
+      performed.add(m[1].toUpperCase())
     }
 
     graph.set(name, performed)

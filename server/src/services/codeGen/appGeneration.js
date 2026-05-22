@@ -1,11 +1,10 @@
 import { getCallsFromProgram } from '../../models/programCalls.js'
 import { getAnalysisByProgramId } from '../../models/programAnalysis.js'
-import { getSettings } from '../../models/settings.js'
-import { getProvider } from '../../ai/providers/base.js'
-import { loadProgramData, buildTestGenContext } from './contextBuilders.js'
-import { toPascal, assembleCode, mergeTestFiles } from './utils.js'
+import { loadProgramData } from './contextBuilders.js'
+import { toPascal, assembleCode } from './utils.js'
 import { generateProgramTypes } from './typeGeneration.js'
 import { generateProgram } from './programGeneration.js'
+import { generateTestSuite } from './verificationService.js'
 
 async function buildGenerationOrder(programIds) {
   const idSet = new Set(programIds.map(String))
@@ -165,22 +164,14 @@ export async function generateProject(programIds, { includeTests = false } = {})
   files.push({ path: `src/index.${ext}`, content: generateIndex(results) })
 
   if (includeTests) {
-    const settings = await getSettings()
-    const provider = await getProvider(settings)
     for (const r of results) {
       if (r.status !== 'ok') continue
       try {
-        const { analysis, tableSchemas, wsConstants } = await loadProgramData(r.programId)
-        const epList = analysis.entry_points ?? []
-        const testFiles = []
-        for (const ep of epList) {
-          const testContext = buildTestGenContext({ name: r.programName }, analysis, ep, tableSchemas, wsConstants)
-          const testResult = await provider.generateTests(testContext)
-          if (testResult.testFile) testFiles.push(testResult.testFile)
-        }
-        if (testFiles.length) {
-          files.push({ path: `src/__tests__/${r.programName}.test.${ext}`, content: mergeTestFiles(testFiles) })
-        }
+        const { program, analysis } = await loadProgramData(r.programId)
+        files.push({
+          path: `src/__tests__/${r.programName}.test.${ext}`,
+          content: generateTestSuite(program, analysis, program.structural_cache),
+        })
       } catch {
         warnings.push(`${r.programName}: test generation failed`)
       }

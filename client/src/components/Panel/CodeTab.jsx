@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { generateFullProgram, generateProjectFiles } from '../../api/programs.js'
+import { useState, useEffect } from 'react'
+import { generateFullProgram, generateProjectFiles, getGeneratedCode } from '../../api/programs.js'
 
 const BTN = {
   base: {
@@ -30,6 +30,37 @@ function downloadBlob(content, filename) {
   URL.revokeObjectURL(url)
 }
 
+function ConfidenceBadge({ confidence }) {
+  const { score, mechanicalPct, holeCount, flaggedForReview = [] } = confidence
+  const criticals = flaggedForReview.filter(f => f.severity === 'critical').length
+  const warnings  = flaggedForReview.filter(f => f.severity === 'warning').length
+
+  const scoreColor = score >= 80 ? '#4ade80' : score >= 60 ? '#facc15' : '#f87171'
+
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+      padding: '6px 0', fontSize: 11, color: '#94a3b8',
+    }}>
+      <span style={{ color: scoreColor, fontWeight: 600 }}>
+        {score}% confidence
+      </span>
+      {mechanicalPct != null && (
+        <span style={{ color: '#64748b' }}>· {mechanicalPct}% mechanical</span>
+      )}
+      {holeCount > 0 && (
+        <span style={{ color: '#64748b' }}>· {holeCount} AI hole{holeCount !== 1 ? 's' : ''}</span>
+      )}
+      {criticals > 0 && (
+        <span style={{ color: '#f87171' }}>· {criticals} critical review item{criticals !== 1 ? 's' : ''}</span>
+      )}
+      {warnings > 0 && (
+        <span style={{ color: '#facc15' }}>· {warnings} warning{warnings !== 1 ? 's' : ''}</span>
+      )}
+    </div>
+  )
+}
+
 export default function CodeTab({ programId, programName, applicationId }) {
   const [status, setStatus]           = useState('idle')
   const [code, setCode]               = useState('')
@@ -40,11 +71,24 @@ export default function CodeTab({ programId, programName, applicationId }) {
   const [includeTests, setIncludeTests] = useState(false)
   const [activeTab, setActiveTab]     = useState('code')
   const [zipping, setZipping]         = useState(false)
+  const [verification, setVerification] = useState(null)
+
+  useEffect(() => {
+    getGeneratedCode(programId).then(cached => {
+      if (!cached) return
+      setCode(cached.generated_code ?? '')
+      setTests(cached.generated_tests ?? '')
+      setLanguage(cached.generated_language ?? 'typescript')
+      setNotes(cached.generated_notes ?? '')
+      setStatus('done')
+    }).catch(() => {})
+  }, [programId])
 
   async function handleGenerate() {
     setStatus('generating')
     setError('')
     setTests('')
+    setVerification(null)
     setActiveTab('code')
     try {
       const result = await generateFullProgram(programId, { includeTests })
@@ -52,6 +96,7 @@ export default function CodeTab({ programId, programName, applicationId }) {
       setLanguage(result.language ?? 'typescript')
       setNotes(result.notes ?? '')
       if (result.tests) setTests(result.tests)
+      if (result.verificationReport) setVerification(result.verificationReport)
       setStatus('done')
     } catch (err) {
       setError(err.message)
@@ -164,6 +209,10 @@ export default function CodeTab({ programId, programName, applicationId }) {
             </div>
           )}
 
+          {verification?.confidence && activeTab === 'code' && (
+            <ConfidenceBadge confidence={verification.confidence} />
+          )}
+
           <div style={{
             flexShrink: 0, borderTop: '1px solid #1e293b',
             paddingTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap',
@@ -185,7 +234,7 @@ export default function CodeTab({ programId, programName, applicationId }) {
                 {zipping ? 'Generating project…' : '↓ Download project .zip'}
               </button>
             )}
-            <button onClick={() => setStatus('idle')} style={btn('muted', { marginLeft: 'auto' })}>
+            <button onClick={() => { setStatus('idle'); setVerification(null) }} style={btn('muted', { marginLeft: 'auto' })}>
               Regenerate
             </button>
           </div>

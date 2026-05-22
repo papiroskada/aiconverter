@@ -2,62 +2,23 @@ import { findProgramById } from '../../models/programs.js'
 import { getAnalysisByProgramId } from '../../models/programAnalysis.js'
 import { getSettings } from '../../models/settings.js'
 import { getProvider } from '../../ai/providers/base.js'
-import { loadProgramData, buildCodeGenContext, buildProgramContext, buildTestGenContext } from './contextBuilders.js'
-import { selectRelevantChunks, assembleCode, mergeTestFiles, getPatterns } from './utils.js'
-
-export async function generateEntryPoint(programId, condition, { includeTests = false } = {}) {
-  const settings = await getSettings()
-  const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
-    await loadProgramData(programId)
-
-  const entryPoints = analysis.entry_points ?? []
-  const ep = condition ? entryPoints.find(e => e.condition === condition) : entryPoints[0]
-  if (!ep) throw Object.assign(new Error(`Entry point not found: ${condition}`), { status: 404 })
-
-  const relevantChunks = selectRelevantChunks(
-    paragraphChunks, ep.paragraphNames ?? [], performGraph, preDispatchNames
-  )
-
-  analysis._selectedEntryPoint = ep
-  const context = buildCodeGenContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
-  const provider = await getProvider(settings)
-  const result = await provider.generateCode(context)
-
-  const out = {
-    programName: program.name,
-    entryPoint: { condition: ep.condition, businessName: ep.businessName },
-    paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
-    contextTokenEstimate: Math.ceil(context.length / 4),
-    ...result,
-  }
-
-  if (includeTests) {
-    const testContext = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
-    const testResult = await provider.generateTests(testContext)
-    out.tests = testResult.testFile ?? ''
-    out.testsCoverage = testResult.coverage ?? []
-  }
-
-  return out
-}
+import { loadProgramData, buildProgramContext } from './contextBuilders.js'
+import { selectRelevantChunks, assembleCode, getPatterns } from './utils.js'
+import { generateSkeleton, extractHoles, holeToContext, assembleSkeleton } from './mechanicalTransformer.js'
+import { buildVerificationReport, generateTestSuite } from './verificationService.js'
 
 export async function generateEntryPointTests(programId, condition) {
-  const settings = await getSettings()
-  const { program, analysis, tableSchemas, wsConstants } = await loadProgramData(programId)
+  const { program, analysis } = await loadProgramData(programId)
 
   const entryPoints = analysis.entry_points ?? []
   const ep = condition ? entryPoints.find(e => e.condition === condition) : entryPoints[0]
   if (!ep) throw Object.assign(new Error(`Entry point not found: ${condition}`), { status: 404 })
-
-  const context = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
-  const provider = await getProvider(settings)
-  const result = await provider.generateTests(context)
 
   return {
     programName: program.name,
     entryPoint: { condition: ep.condition, businessName: ep.businessName },
-    testFile: result.testFile ?? '',
-    coverage: result.coverage ?? [],
+    testFile: generateTestSuite(program, analysis, program.structural_cache),
+    coverage: [],
   }
 }
 
@@ -69,37 +30,54 @@ export async function generateProgram(programId, { includeTests = false } = {}) 
   const entryPoints = analysis.entry_points ?? []
   if (!entryPoints.length) throw Object.assign(new Error('No entry points in analysis'), { status: 422 })
 
-  const allParagraphNames = [...new Set(entryPoints.flatMap(ep => ep.paragraphNames ?? []))]
-  const relevantChunks = selectRelevantChunks(
-    paragraphChunks, allParagraphNames, performGraph, preDispatchNames
-  )
+  const patterns  = getPatterns(settings)
+  const provider  = await getProvider(settings)
+  const cache     = program.structural_cache
+  const hasIR     = Array.isArray(cache?.linkageVars) && cache.linkageVars.length > 0
 
-  const context = buildProgramContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
-  const patterns = getPatterns(settings)
-  const provider = await getProvider(settings)
-  const result = await provider.generateProgram(context, patterns)
+  let code, notes, paragraphsIncluded, contextTokenEstimate, verificationReport
+
+  if (hasIR) {
+    // ── Plan B path: mechanical skeleton + AI hole filling ──────────────────
+    const skeleton    = generateSkeleton(program, analysis, paragraphChunks, cache, settings, wsConstants)
+    const holes       = extractHoles(skeleton)
+    const filledHoles = await Promise.all(
+      holes.map(async hole => {
+        const ctx    = holeToContext(hole, paragraphChunks, skeleton, settings, tableSchemas)
+        const result = await provider.fillHole(ctx)
+        return { id: hole.id, code: result.code ?? '  // hole fill failed' }
+      })
+    )
+    code                 = assembleSkeleton(skeleton, filledHoles)
+    notes                = [`Mechanical skeleton: ${holes.length} hole(s) filled by AI`]
+    paragraphsIncluded   = paragraphChunks.map(c => c.chunk_name)
+    contextTokenEstimate = holes.reduce((sum, h) => sum + Math.ceil(holeToContext(h, paragraphChunks, skeleton, settings, tableSchemas).cobolText.length / 4), 0)
+    verificationReport   = buildVerificationReport(program, analysis, cache, skeleton, holes)
+  } else {
+    // ── Fallback: full-context path ─────────────────────────────────────────
+    const allParagraphNames = [...new Set(entryPoints.flatMap(ep => ep.paragraphNames ?? []))]
+    const relevantChunks    = selectRelevantChunks(paragraphChunks, allParagraphNames, performGraph, preDispatchNames)
+    const context           = buildProgramContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
+    const result            = await provider.generateProgram(context, patterns)
+    code                    = assembleCode(result)
+    notes                   = result.notes ?? []
+    paragraphsIncluded      = relevantChunks.map(c => c.chunk_name)
+    contextTokenEstimate    = Math.ceil(context.length / 4)
+  }
 
   const out = {
     programName: program.name,
     language: patterns.language,
-    code: assembleCode(result),
+    code,
+    notes,
     entryPoints: entryPoints.map(ep => ({ condition: ep.condition, businessName: ep.businessName })),
-    paragraphsIncluded: relevantChunks.map(c => c.chunk_name),
-    contextTokenEstimate: Math.ceil(context.length / 4),
-    ...result,
+    paragraphsIncluded,
+    contextTokenEstimate,
+    ...(verificationReport ? { verificationReport } : {}),
   }
 
   if (includeTests) {
-    const testFiles = []
-    for (const ep of entryPoints) {
-      try {
-        const testContext = buildTestGenContext(program, analysis, ep, tableSchemas, wsConstants)
-        const testResult = await provider.generateTests(testContext)
-        if (testResult.testFile) testFiles.push(testResult.testFile)
-      } catch { /* non-fatal — skip failed entry point test */ }
-    }
-    out.tests = mergeTestFiles(testFiles)
-    out.testsCoverage = []
+    out.tests = verificationReport?.testSuite ?? generateTestSuite(program, analysis, cache)
   }
 
   return out

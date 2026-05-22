@@ -2,12 +2,13 @@ import { Router } from 'express'
 import multer from 'multer'
 import { getAllPrograms, findProgramById } from '../models/programs.js'
 import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
-import { getAnalysisByProgramId, updateFlag, patchEntryPoints } from '../models/programAnalysis.js'
+import { getAnalysisByProgramId, updateFlag, patchEntryPoints, saveGeneratedCode, getGeneratedCode } from '../models/programAnalysis.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPoint, generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
+import { generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
+import { buildVerificationReport } from '../services/codeGen/verificationService.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage() })
@@ -181,13 +182,12 @@ router.get('/:id/chunks', async (req, res, next) => {
 })
 
 // POST /api/programs/upload
-router.post('/upload', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'companion', maxCount: 1 }]), async (req, res) => {
+router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const applicationId = req.body.application_id || null
-    const file = req.files?.file?.[0]
-    const companion = req.files?.companion?.[0] ?? null
+    const file = req.file
     if (!file) return res.status(400).json({ error: 'No file provided' })
-    const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId, companion)
+    const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId)
     res.status(202).json({ id: program.id, status: program.status })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
@@ -204,11 +204,11 @@ router.post('/:id/analyze', async (req, res) => {
   }
 })
 
-// POST /api/programs/:id/generate
+// POST /api/programs/:id/generate — delegates to generate-program (kept for backwards compat)
 router.post('/:id/generate', async (req, res) => {
   try {
-    const { condition = null, includeTests = false } = req.body ?? {}
-    const result = await generateEntryPoint(req.params.id, condition, { includeTests })
+    const { includeTests = false } = req.body ?? {}
+    const result = await generateProgram(req.params.id, { includeTests })
     res.json(result)
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
@@ -223,10 +223,39 @@ router.post('/:id/generate-tests', async (req, res, next) => {
   } catch (err) { next(err) }
 })
 
+// GET /api/programs/:id/generated-code
+router.get('/:id/generated-code', async (req, res, next) => {
+  try {
+    const cached = await getGeneratedCode(req.params.id)
+    res.json(cached)
+  } catch (err) { next(err) }
+})
+
+// GET /api/programs/:id/verification-report
+router.get('/:id/verification-report', async (req, res, next) => {
+  try {
+    const [program, analysis] = await Promise.all([
+      findProgramById(req.params.id),
+      getAnalysisByProgramId(req.params.id),
+    ])
+    if (!program || !analysis) return res.status(404).json({ error: 'Not found' })
+    const cache = program.structural_cache
+    if (!cache) return res.status(404).json({ error: 'No structural cache — re-analyse first' })
+    const report = buildVerificationReport(program, analysis, cache, null, [])
+    res.json(report)
+  } catch (err) { next(err) }
+})
+
 // POST /api/programs/:id/generate-program
 router.post('/:id/generate-program', async (req, res, next) => {
   try {
     const result = await generateProgram(req.params.id, { includeTests: req.body?.includeTests ?? false })
+    saveGeneratedCode(req.params.id, {
+      code: result.code,
+      tests: result.tests ?? null,
+      language: result.language ?? 'typescript',
+      notes: Array.isArray(result.notes) ? result.notes.join(' · ') : (result.notes ?? null),
+    }).catch(() => {})
     res.json(result)
   } catch (err) { next(err) }
 })

@@ -1,6 +1,6 @@
 import { logger } from '../logger.js'
-import { extractLinkageVars, extractWorkingStorage, extractEvaluateDispatch, extractPerformGraph, resolveTransitive, collectMissingParagraphs } from '../parser/cobolParser.js'
-import { extractCalls, extractExecSql, extractConstructs, extractTuxTables, extractErrorEntries } from '../parser/cobolExtractor.js'
+import { extractLinkageVars, extractWorkingStorage, extractEvaluateDispatch, extractPerformGraph, resolveTransitive, collectMissingParagraphs, extractEnumCandidates, extractRedefinesMap } from '../parser/cobolParser.js'
+import { extractCalls, extractExecSql, extractConstructs, extractTuxTables, extractErrorEntries, buildPicTypeMap, extractDataFlow } from '../parser/cobolExtractor.js'
 
 const TOKEN_LIMIT = 80000   // above this → two-step
 const MODEL_LIMIT = 100000  // above this → shrink snippets further
@@ -29,11 +29,16 @@ function extractSelectFiles(cobolText) {
   return (cobolText.match(/SELECT\s+\S+\s+ASSIGN[^\n]*/gi) ?? [])
 }
 
+function conditionValue(c) {
+  if (c.value !== undefined) return c.value  // old cached records
+  return (c.values ?? []).map(v => v.value ?? `${v.from} THRU ${v.to}`).join(', ')
+}
+
 function formatWsVars(wsVars) {
   if (!wsVars.length) return '  (none)'
   return wsVars.map(v => {
     const header = `  ${v.level} ${v.name}${v.pic ? ` (${v.pic})` : ''}`
-    const conditions = v.conditions.map(c => `     88 ${c.name} = ${c.value}`).join('\n')
+    const conditions = (v.conditions ?? []).map(c => `     88 ${c.name} = ${conditionValue(c)}`).join('\n')
     return conditions ? `${header}\n${conditions}` : header
   }).join('\n')
 }
@@ -43,7 +48,7 @@ function formatLinkageVars(linkageVars) {
   return linkageVars.map(v => {
     const dir = v.direction ? ` [${v.direction}]` : ''
     const header = `  ${v.level} ${v.name}${v.pic ? ` (${v.pic})` : ''}${dir}`
-    const conditions = v.conditions.map(c => `     88 ${c.name} = ${c.value}`).join('\n')
+    const conditions = (v.conditions ?? []).map(c => `     88 ${c.name} = ${conditionValue(c)}`).join('\n')
     return conditions ? `${header}\n${conditions}` : header
   }).join('\n')
 }
@@ -210,6 +215,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   const paragraphChunks = chunks.filter(c => c.chunk_type === 'paragraph' || c.chunk_type === 'sub_paragraph')
 
   let linkageVars, wsVars, calls, execSqlTables, constructs, selectFiles, tuxTables, errorEntries, evaluateDispatch, performGraph, preDispatchNames, missingParagraphs
+  let enumCandidates, redefines, picTypes, dataFlow
 
   if (structuralCacheIn) {
     linkageVars      = structuralCacheIn.linkageVars
@@ -224,6 +230,10 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     preDispatchNames = structuralCacheIn.preDispatchNames
     performGraph     = deserializePerformGraph(structuralCacheIn.performGraph)
     missingParagraphs = new Set(structuralCacheIn.missingParagraphs ?? [])
+    enumCandidates   = structuralCacheIn.enumCandidates ?? []
+    redefines        = structuralCacheIn.redefines ?? []
+    picTypes         = structuralCacheIn.picTypes ?? {}
+    dataFlow         = structuralCacheIn.dataFlow ?? {}
   } else {
     linkageVars      = extractLinkageVars(cobolText)
     wsVars           = extractWorkingStorage(cobolText)
@@ -237,6 +247,10 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     performGraph     = extractPerformGraph(paragraphChunks)
     preDispatchNames = findPreDispatchParagraphs(paragraphChunks)
     missingParagraphs = collectMissingParagraphs(performGraph)
+    enumCandidates   = extractEnumCandidates(wsVars, linkageVars)
+    redefines        = extractRedefinesMap(wsVars, linkageVars)
+    picTypes         = buildPicTypeMap(wsVars, linkageVars)
+    dataFlow         = extractDataFlow(paragraphChunks)
   }
 
   const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames, missingParagraphs)
@@ -254,6 +268,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     tuxTables, errorEntries, evaluateDispatch, preDispatchNames,
     missingParagraphs: [...missingParagraphs],
     performGraph: serializePerformGraph(performGraph),
+    enumCandidates, redefines, picTypes, dataFlow,
   }
 
   if (estimateTokens(fullContext) <= TOKEN_LIMIT) {
