@@ -30,11 +30,9 @@ server/
 │   │   └── settings.js
 │   ├── parser/                       # Статичний парсинг без AI
 │   │   ├── cobolParser.js            # Лексичний аналіз COBOL
-│   │   ├── cobolExtractor.js         # Regex-вилучення конструкцій
-│   │   └── cParser.js                # Парсинг C-файлів
+│   │   └── cobolExtractor.js         # Regex-вилучення конструкцій
 │   ├── ai/
-│   │   ├── orchestrator.js           # COBOL AI-аналіз
-│   │   ├── cOrchestrator.js          # C AI-аналіз
+│   │   ├── orchestrator.js           # AI-аналіз
 │   │   ├── prompts.js                # LLM-промпти + JSON-схеми
 │   │   └── providers/
 │   │       ├── base.js               # Абстрактний клас провайдера
@@ -54,9 +52,11 @@ server/
 │           ├── utils.js              # Чисті утиліти
 │           ├── formatters.js         # Форматери для LLM-промптів
 │           ├── contextBuilders.js    # Збірка контекстів для LLM + завантаження даних
-│           ├── typeGeneration.js     # Детерміноване генерування TypeScript типів
-│           ├── programGeneration.js  # Генерація коду для entry point / програми
-│           └── appGeneration.js      # Генерація на рівні застосунку + project scaffold
+│           ├── typeGeneration.js         # Детерміноване генерування TypeScript типів
+│           ├── mechanicalTransformer.js  # Plan B: TypeScript skeleton + [AI_HOLE] markers
+│           ├── verificationService.js    # Plan D: confidence scoring + deterministic tests
+│           ├── programGeneration.js      # Генерація: Plan B skeleton path або fallback
+│           └── appGeneration.js          # Генерація на рівні застосунку + project scaffold
 ├── tests/
 │   ├── ai/
 │   ├── parser/
@@ -99,7 +99,7 @@ HTTP Request
 | `status` | TEXT | `pending` / `analyzing` / `analyzed` / `failed` |
 
 #### `programs`
-Центральна таблиця. Кожен запис — один COBOL або C файл.
+Центральна таблиця. Кожен запис — один COBOL файл.
 
 | Колонка | Тип | Опис |
 |---|---|---|
@@ -107,9 +107,7 @@ HTTP Request
 | `name` | TEXT | Ім'я програми (ім'я файлу без розширення, UPPERCASE) |
 | `status` | `program_status` | `pending` / `analyzing` / `analyzed` / `failed` |
 | `file_path` | TEXT | Шлях до збереженого файлу в `uploads/` |
-| `file_type` | TEXT | `cobol` або `c` |
 | `application_id` | UUID FK | Посилання на `applications`, nullable |
-| `companion_content` | TEXT | Вміст допоміжного `.u` файлу (для C-програм) |
 | `structural_cache` | JSONB | Кеш результатів regex-парсингу (щоб не перечитувати при реаналізі) |
 | `analyzed_at` | TIMESTAMP | |
 
@@ -247,30 +245,115 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 
 ---
 
+## Structural Cache (`programs.structural_cache`)
+
+Центральний JSONB-об'єкт детерміністичного аналізу. Обчислюється один раз при першому завантаженні файлу і зберігається в `programs.structural_cache`. При реаналізі (`reanalyze`) cache обнуляється і відбудовується заново; при повторному AI-аналізі без скидання — всі regex-парсери пропускаються, дані беруться з cache.
+
+### Поля
+
+| Поле | Тип | Джерело | Опис |
+|---|---|---|---|
+| `linkageVars` | `CobolVar[]` | `extractLinkageVars()` | Змінні LINKAGE SECTION: рівень, ім'я, PIC, `comp`, `redefines`, `direction`, масив `conditions` (level-88) |
+| `wsVars` | `CobolVar[]` | `extractWorkingStorage()` | Змінні WORKING-STORAGE — та сама структура без `direction` |
+| `calls` | `{program, using}[]` | `extractCalls()` | CALL-оператори: ім'я зовнішньої програми + USING-аргумент |
+| `execSqlTables` | `SqlTable[]` | `extractExecSql()` | EXEC SQL блоки → `{table, operation, fields, keyFields}` |
+| `tuxTables` | `TuxTable[]` | `extractTuxTables()` | Tuxedo ATMI операції → `{table, operation, keyFields}` (три стратегії детекції: MOVE-FUNC, paragraph naming, PERFORM suffix) |
+| `constructs` | `string[]` | `extractConstructs()` | Наявні конструкції програми: `PERFORM`, `EVALUATE`, `GO TO`, `EXEC SQL` тощо |
+| `selectFiles` | `string[]` | `parseCobol()` | Записи FILE SECTION |
+| `errorEntries` | `{seqNo, dataElement}[]` | `extractErrorEntries()` | Коди помилок з WORKING-STORAGE (числовий seqNo + назва елемента даних) |
+| `evaluateDispatch` | `DispatchBlock[]` | `extractEvaluateDispatch()` | EVALUATE-блоки: `{evaluateSubject, entries: [{whenValue, performParagraph}]}` |
+| `preDispatchNames` | `string[]` | `orchestrator` | Параграфи що виконуються перед EVALUATE-диспетчером |
+| `performGraph` | `{[para]: string[]}` | `extractPerformGraph()` | Серіалізований `Map<string, Set<string>>` PERFORM-залежностей між параграфами |
+| `missingParagraphs` | `string[]` | `collectMissingParagraphs()` | Параграфи на які є PERFORM-виклики, але немає визначення в коді |
+| `enumCandidates` | `EnumCandidate[]` | `extractEnumCandidates()` | *(Plan A)* Поля з 88-level conditions де всі values — прості літерали → кандидати на TypeScript `enum` або Union Type |
+| `redefines` | `RedefinesEntry[]` | `extractRedefinesMap()` | *(Plan A)* COBOL REDEFINES-аліаси: поле що перекриває пам'ять іншого поля → `{field, redefines, level, pic, comp}` |
+| `picTypes` | `{[name]: string}` | `buildPicTypeMap()` | *(Plan A)* Плаский map COBOL-ім'я → JS-тип: `'string'` / `'number'` / `'Decimal'`. `COMP-3` (Packed Decimal) → `'Decimal'` — принципово, щоб не втрачати точність фінансових розрахунків через floating point |
+| `dataFlow` | `{[para]: {reads, writes}}` | `extractDataFlow()` | *(Plan A)* Спрощений Data Flow Graph: MOVE/COMPUTE/ADD патерни per paragraph → `{reads: string[], writes: string[]}` |
+
+### Типи
+
+**`EnumCandidate`** — виходить з `extractEnumCandidates(wsVars, linkageVars)`:
+```json
+{
+  "parentField": "WS-CONTROL-MARK",
+  "parentPic": "X(1)",
+  "tsName": "wsControlMark",
+  "values": [
+    { "name": "MARK-SUMMARY", "tsName": "MARK_SUMMARY", "value": "S" },
+    { "name": "MARK-DETAIL",  "tsName": "MARK_DETAIL",  "value": "D" }
+  ]
+}
+```
+
+**`RedefinesEntry`** — виходить з `extractRedefinesMap(wsVars, linkageVars)`:
+```json
+{ "field": "WS-TIMESTAMP-RED", "redefines": "WS-TIMESTAMP", "level": "05", "pic": "X(14)", "comp": null }
+```
+
+**`DispatchBlock`** — виходить з `extractEvaluateDispatch()`:
+```json
+{
+  "evaluateSubject": "WS-CONTROL-MARK",
+  "entries": [
+    { "whenValue": "S", "performParagraph": "PROCESS-SUMMARY" },
+    { "whenValue": "D", "performParagraph": "PROCESS-DETAILS" }
+  ]
+}
+```
+
+### Взаємодія полів у pipeline
+
+```
+structural_cache
+  │
+  ├─ linkageVars + wsVars
+  │    ├─ extractEnumCandidates()  → enumCandidates   → typeGeneration.js (Union Types)
+  │    ├─ extractRedefinesMap()    → redefines         → mechanicalTransformer (interface коментарі)
+  │    └─ buildPicTypeMap()        → picTypes          → mechanicalTransformer (typed interfaces + Decimal)
+  │
+  ├─ performGraph
+  │    └─ resolveTransitive()      → транзитивний DFS  → selectRelevantChunks, resolveHoleNames
+  │
+  ├─ evaluateDispatch
+  │    └─ filterEntryPoints()      → видалення AI-галюцинацій entry-points
+  │
+  ├─ dataFlow
+  │    └─ buildHoleBlock()         → reads/writes у [AI_HOLE] анотаціях
+  │
+  └─ tuxTables + execSqlTables
+       └─ validateDbTables()       → помічає ai_hallucinated: true для неіснуючих таблиць
+```
+
+---
+
 ## Парсери (`src/parser/`)
 
 Статичний аналіз без AI. Тільки читання, без звернення до БД.
 
-### `cobolParser.js` (407 рядків)
+### `cobolParser.js`
 
-**Основна задача:** розбити COBOL-текст на chunks і побудувати граф PERFORM-залежностей.
+**Основна задача:** розбити COBOL-текст на chunks, побудувати граф PERFORM-залежностей і витягти IR-метадані.
 
 | Функція | Що робить |
 |---|---|
-| `preprocessCobol(text)` | Видаляє sequence numbers (cols 1-6) з fixed-format COBOL |
+| `preprocessCobol(text)` | Видаляє sequence numbers (cols 1-6) і identification area (cols 73+) з fixed-format COBOL |
 | `parseCobol(text)` | Ділить програму на `data_summary` (WORKING-STORAGE, LINKAGE, FILE) і `paragraph`/`sub_paragraph` chunks; оцінює токени |
-| `extractLinkageVars(text)` | Витягує змінні LINKAGE SECTION з рівнями, PIC та 88-level conditions; визначає direction за позицією (input/output/inout) |
-| `extractWorkingStorage(text)` | Витягує WORKING-STORAGE змінні аналогічно |
-| `extractEvaluateDispatch(text)` | Знаходить EVALUATE-блоки і зіставляє WHEN-значення → PERFORM-параграфи |
+| `extractLinkageVars(text)` | Витягує змінні LINKAGE SECTION з рівнями, PIC, `comp` (`COMP-3`/`COMP-5`/`COMP`), `redefines` та 88-level `conditions: [{name, values}]`; визначає direction |
+| `extractWorkingStorage(text)` | Аналогічно до `extractLinkageVars` |
+| `extractEvaluateDispatch(text)` | Знаходить EVALUATE-блоки і зіставляє WHEN-значення → PERFORM-параграфи; коректно обрізає identification area (cols 73+) |
 | `extractPerformGraph(chunks)` | Будує `Map<string, Set<string>>` залежностей PERFORM між параграфами |
 | `resolveTransitive(name, graph)` | DFS по performGraph — повертає всі транзитивні залежності параграфа |
 | `collectMissingParagraphs(graph)` | Параграфи, на які є PERFORM але немає визначення |
+| `extractEnumCandidates(wsVars, linkageVars)` | *(Plan A)* Поля з 88-level conditions де всі values — single literals → кандидати на TypeScript enum |
+| `extractRedefinesMap(wsVars, linkageVars)` | *(Plan A)* Всі поля з `redefines !== null` → `[{field, redefines, level, pic, comp}]` |
 
 **Алгоритм chunking:** максимум 300 рядків, 45 рядків перекриття між сусідніми фрагментами. Параграфи, що відповідають EVALUATE-dispatch, завжди включаються повністю.
 
-### `cobolExtractor.js` (413 рядків)
+**Fixed-format COBOL:** cols 1-6 = sequence number, col 7 = indicator, cols 8-72 = code, cols 73+ = identification area. Всі regex-екстрактори обрізають identification area до `substring(6, 72)`.
 
-**Основна задача:** regex-вилучення конкретних конструкцій з COBOL.
+### `cobolExtractor.js`
+
+**Основна задача:** regex-вилучення конструкцій і IR-семантики з COBOL.
 
 | Функція | Що витягує |
 |---|---|
@@ -280,23 +363,9 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 | `extractConstructs(text)` | Список конструкцій: EXEC SQL, FILE I/O, EVALUATE, PERFORM VARYING тощо |
 | `extractErrorEntries(text)` | 88-level items з числовими кодами → `{ seqNo, dataElement }` |
 | `extractTuxTableSchemas(text)` | WORKING-STORAGE копії Tuxedo-таблиць → `Map<tableName, Field[]>` з PIC-типами та camelCase іменами |
-| `extractWsConstants(text)` | VALUE-ініціалізовані поля з WORKING-STORAGE → `{ name, value, camelName }` |
-
-### `cParser.js` (253 рядки)
-
-**Основна задача:** аналог cobolParser для C-файлів CAPI-сервісів.
-
-| Функція | Що робить |
-|---|---|
-| `parseCProgram(text)` | Ділить C-файл на `function` chunks і `entry_point` chunks |
-| `extractCFunctions(text)` | Знаходить визначення функцій (не прототипи): ім'я, аргументи, тіло |
-| `extractCIncludes(text)` | `#include` заголовки |
-| `extractCServiceCalls(text)` | Виклики svcCall*/c_* функцій |
-| `extractCErrorCodes(text)` | Присвоєння числових кодів помилок в output-полях |
-| `extractCDbCalls(text)` | svcCallPlnsqlio виклики → `{ table, operation, keyFields }` |
-| `extractCModeSwitch(text)` | switch/if-блоки диспетчеризації за mode-полем |
-
----
+| `extractWsConstants(text)` | VALUE-ініціалізовані поля з WORKING-STORAGE → `{ name, value, camelName }`; коректно обробляє fixed-format (sequence numbers) |
+| `buildPicTypeMap(wsVars, linkageVars)` | *(Plan A)* Плаский `Map<COBOL-name, tsType>` з урахуванням COMP-3→`Decimal`, COMP-5→`number` |
+| `extractDataFlow(paragraphChunks)` | *(Plan A)* MOVE/COMPUTE/ADD патерни per paragraph → `{ paragraphName: { reads[], writes[] } }` |
 
 ## AI-шар (`src/ai/`)
 
@@ -308,38 +377,38 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 - `generateCode(context)` → `{ functionName, code, notes }`
 - `generateProgram(context, patterns)` → `{ sharedTypes, functions[], dispatcher, imports[], notes[] }`
 - `generateTests(context)` → `{ testFile, coverage[] }`
+- `fillHole(holeContext, signal)` → *(Plan C)* `{ code }` — заповнює один `[AI_HOLE]` у скелеті (temperature=0.2)
 
 **`getProvider(settings)`** — фабрика: повертає `ClaudeProvider` або `OpenAIProvider` залежно від `settings.ai_provider`.
 
 ### `providers/claude.js`
 
 Реалізація через `@anthropic-ai/sdk`. Використовує дві моделі:
-- `claude_model_interface` (за замовчуванням `claude-sonnet-4-6`) — для `extractBusinessAnalysis`, `generateCode`, `generateProgram`, `generateTests`
-- `claude_model_rules` (за замовчуванням `claude-haiku-4-5-20251001`) — для `analyzeEntryPoint` (детальний аналіз одного entry-point, менша модель = швидше)
+- `claude_model_interface` (за замовчуванням `claude-sonnet-4-6`) — для `extractBusinessAnalysis`, `generateCode`, `generateProgram`, `generateTests`, `fillHole`
+- `claude_model_rules` (за замовчуванням `claude-haiku-4-5-20251001`) — для `analyzeEntryPoint`
 
-Всі методи викликають `client.messages.create({ model, max_tokens: 8192, messages })` і парсять JSON з відповіді.
+Всі методи викликають `client.messages.create({ model, max_tokens, messages })` і парсять JSON. `fillHole` використовує `temperature: 0.2` для детерміністичнішого виводу.
 
 ### `providers/openai.js`
 
 Аналогічна реалізація через `openai` SDK. Використовує `gpt-4o` і `gpt-4o-mini` відповідно.
 
-### `prompts.js` (329 рядків)
+### `prompts.js`
 
-Сім LLM-промптів:
+Вісім LLM-промптів:
 
 | Константа | Використання | Модель |
 |---|---|---|
 | `BUSINESS_ANALYSIS_PROMPT(context)` | Повний аналіз програми | interface (Sonnet/GPT-4o) |
 | `ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)` | Деталі одного entry-point при two-step | rules (Haiku/GPT-4o-mini) |
-| `C_BUSINESS_ANALYSIS_PROMPT(context)` | Аналіз C-файлу | interface |
-| `C_ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context)` | Деталі entry-point для C | rules |
 | `CODE_GENERATION_PROMPT(context)` | Генерація одного entry-point | interface |
-| `PROGRAM_GENERATION_PROMPT(context, patterns)` | Генерація всього модуля | interface |
+| `PROGRAM_GENERATION_PROMPT(context, patterns)` | Генерація всього модуля (fallback path) | interface |
 | `TEST_GENERATION_PROMPT(context)` | Vitest-тести для entry-point | interface |
+| `HOLE_FILL_PROMPT(holeContext)` | *(Plan C)* Заповнення одного `[AI_HOLE]`: оточуючий TS-код + COBOL-параграфи + схеми таблиць → `{ code }` | interface, temp 0.2 |
 
 Кожен промпт містить повну JSON-схему відповіді та деталізовані правила.
 
-### `orchestrator.js` (311 рядків) — COBOL-оркестратор
+### `orchestrator.js` — COBOL-оркестратор
 
 **Основна задача:** побудувати контекст для LLM, викликати провайдера, нормалізувати результат.
 
@@ -356,13 +425,48 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 - > 80 000 токенів → two-step: спочатку 5-рядкові сніппети → потім паралельний detail-аналіз кожного entry-point
 - > 100 000 токенів → скорочення до 3-рядкових сніпетів
 
-### `cOrchestrator.js` (163 рядки) — C-оркестратор
+**IR-збагачення (Plan A):** при кожному аналізі `orchestrator.js` також обчислює і зберігає в `structural_cache`:
+- `enumCandidates` — поля з 88-level conditions → TypeScript enum candidates
+- `redefines` — всі REDEFINES поля
+- `picTypes` — плаский map COBOL-ім'я → JS-тип (`string`/`number`/`Decimal`)
+- `dataFlow` — MOVE/COMPUTE/ADD потоки даних per paragraph
 
-Аналог `orchestrator.js` для C-файлів. Відмінності:
-- Нема PERFORM-graph, замість нього — function-call граф
-- Mode-dispatch через switch/if замість EVALUATE
-- PRE-DISPATCH FUNCTIONS замість PRE-DISPATCH PARAGRAPHS
-- DATABASE CALLS через `svcCallPlnsqlio` замість EXEC SQL / Tuxedo
+---
+
+## Hybrid Neuro-Symbolic Pipeline
+
+Генерація коду побудована на чотирьох рівнях (Plans A→D), де кожен наступний рівень звужує задачу для AI і робить результат детерміністичнішим.
+
+```
+Plan A — IR Enrichment (cobolParser + cobolExtractor + orchestrator)
+  │  Збагачує structural_cache: enumCandidates, redefines, picTypes, dataFlow
+  │  Стає доступним після першого аналізу файлу.
+  ▼
+Plan B — Mechanical Skeleton (mechanicalTransformer)
+  │  З IR детерміністично генерує TypeScript-скелет:
+  │    - typed Input/Output interfaces з picTypes
+  │    - createDefaultOutput() з PIC-дефолтами
+  │    - async function per entry-point (тіло = [AI_HOLE])
+  │    - dispatcher з switch по WS-константах
+  ▼
+Plan C — AI Context Reform (HOLE_FILL_PROMPT + provider.fillHole)
+  │  AI заповнює лише [AI_HOLE] блоки (~200 токенів кожен, temperature=0.2).
+  │  Контекст: оточуючий TS-код + COBOL-параграфи + схеми задіяних таблиць.
+  │  Паралельне виконання по всіх holes.
+  ▼
+Plan D — Verification Layer (verificationService)
+     Детерміністична верифікація без AI:
+       - Confidence score = 50% механічне покриття + 20% typed fields + 30% holes з джерелом
+       - Deterministic Vitest test suite з IR: error paths, not-found, happy path
+       - GET /:id/verification-report — доступний без регенерації коду
+       - ConfidenceBadge у CodeTab після генерації
+```
+
+**Вибір шляху в `generateProgram()`:** якщо `structural_cache.linkageVars` не порожній — Plan B path (skeleton + hole filling). Інакше — fallback до legacy full-context `provider.generateProgram`.
+
+**Вартість токенів Plan B vs Fallback:**
+- Fallback: ~15 000–40 000 токенів (весь COBOL у контексті) → 1 великий виклик
+- Plan B: ~200–500 токенів × N holes (паралельно) + механічний скелет безкоштовно
 
 ---
 
@@ -374,7 +478,7 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 
 | Функція | Що робить |
 |---|---|
-| `uploadAndStartAnalysis(file, sseEmitters, applicationId, companion)` | Зберігає файл на диск, парсить (COBOL або C), зберігає chunks, запускає аналіз (fire-and-forget для single, повертає програму для batch) |
+| `uploadAndStartAnalysis(file, sseEmitters, applicationId)` | Зберігає файл на диск, парсить COBOL, зберігає chunks, запускає аналіз (fire-and-forget для single, повертає програму для batch) |
 | `runProgramFromFile(programId, programSseEmitters, settings, appSseEmitters)` | Читає збережений файл і запускає аналіз — використовується batch-сервісом |
 | `reanalyze(programId, sseEmitters)` | Скидає `structural_cache`, перезапускає аналіз із наявними chunks |
 | `deleteProgram(programId, sseEmitters)` | Видаляє з БД + файл з диску + закриває SSE-з'єднання |
@@ -411,7 +515,7 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 | `toMarkdown(program, analysis)` | Генерує Markdown-специфікацію: бізнес-ціль, contracts, entry-points (кроки, side effects, errors, DB-операції), error catalog, dependencies, DB tables |
 | `toOpenApi(program, analysis)` | Генерує OpenAPI 3.0 spec: кожен entry-point → окремий POST-endpoint зі схемами request/response |
 
-### `codeGen/` (704 рядки → 6 файлів)
+### `codeGen/` (9 файлів — Hybrid Neuro-Symbolic Pipeline)
 
 #### `utils.js`
 Чисті функції без зовнішніх залежностей (крім `cobolParser`):
@@ -452,14 +556,33 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 | `generateProgramTypes(programIds)` | З `input_contract` / `output_contract` → `export interface ProgramInput { ... }` + `Output` для кожної програми |
 | `generateDbTypes(programIds)` | Читає файли, викликає `extractTuxTableSchemas` → `export interface TableNameRow { ... }` |
 
+#### `mechanicalTransformer.js` *(Plan B — Mechanical Skeleton)*
+Детерміноване генерування TypeScript-скелету з маркерами `[AI_HOLE]`:
+
+| Функція | Що робить |
+|---|---|
+| `generateSkeleton(program, analysis, chunks, structuralCache, settings, wsConstants)` | Генерує повний `.ts`-файл: typed interfaces з `picTypes`, `createDefaultOutput()`, окрема `async function` на кожен entry-point (тіло = `[AI_HOLE]`), dispatcher з`switch` по WS-константах |
+| `extractHoles(skeleton)` | Парсить `[AI_HOLE id="..."]` маркери → `[{id, paragraphs, reads, writes, pattern, startIndex, endIndex}]` |
+| `holeToContext(hole, chunks, skeleton, settings, tableSchemas)` | Будує фокусний контекст для одного hole: ~20 рядків до + 10 після в TS, COBOL-текст параграфів, схеми задіяних таблиць |
+| `assembleSkeleton(skeleton, filledHoles)` | Замінює `[AI_HOLE]` блоки заповненим кодом (у зворотньому порядку для збереження індексів) |
+
+#### `verificationService.js` *(Plan D — Verification Layer)*
+Детерміністична верифікація та тест-генерація з IR (без AI):
+
+| Функція | Що робить |
+|---|---|
+| `computeConfidence(skeleton, holes, analysis, structuralCache)` | Повертає `{ score, mechanicalPct, typeCompleteness, holeCoveragePct, holeCount, flaggedForReview }`. Score = зважена сума: 50% механічне покриття + 20% typed linkage + 30% holes з COBOL-джерелом |
+| `generateTestSuite(program, analysis, structuralCache)` | Детерміністичний Vitest-файл з IR: error-path per entry-point, not-found tests per READ-table, happy path; не потребує AI |
+| `buildVerificationReport(program, analysis, structuralCache, skeleton, holes)` | Комбінує обидва вище → `{ confidence, testSuite }` |
+
 #### `programGeneration.js`
-Генерація коду для одного entry-point або цілої програми:
+Генерація коду для одного entry-point або цілої програми. `generateProgram` має **два шляхи**:
 
 | Функція | Що робить |
 |---|---|
 | `generateEntryPoint(programId, condition, { includeTests })` | Знаходить entry-point за condition → buildCodeGenContext → `provider.generateCode` → результат + опційно тести |
 | `generateEntryPointTests(programId, condition)` | Окремо генерує тести для entry-point без коду |
-| `generateProgram(programId, { includeTests })` | Всі entry-points → buildProgramContext → `provider.generateProgram` → `assembleCode` → результат |
+| `generateProgram(programId, { includeTests })` | **Plan B path** (якщо `structural_cache.linkageVars` не порожній): `generateSkeleton` → `extractHoles` → паралельний `provider.fillHole` per hole → `assembleSkeleton` → `buildVerificationReport`. **Fallback**: `buildProgramContext` → `provider.generateProgram` → `assembleCode` |
 | `checkConsistency(programIds)` | Крос-перевірка: поля в `external_dependencies[].dataIn` існують у `input_contract` callee; повертає список розбіжностей |
 
 #### `appGeneration.js`
@@ -487,11 +610,12 @@ Singleton-рядок (id=1). Глобальна конфігурація.
 | `GET` | `/:id/export?format=markdown\|openapi` | Завантаження специфікації |
 | `GET` | `/callers/:name` | Хто викликає дану програму |
 | `GET` | `/:id/calls` | Кого викликає дана програма |
-| `POST` | `/upload` | Завантаження файлу (+ companion), запуск аналізу |
+| `POST` | `/upload` | Завантаження COBOL файлу, запуск аналізу |
 | `POST` | `/:id/analyze` | Реаналіз |
+| `GET` | `/:id/verification-report` | *(Plan D)* Confidence score + детерміністичний тест-файл без регенерації коду |
 | `POST` | `/:id/generate` | Генерація entry-point `{ condition, includeTests }` |
 | `POST` | `/:id/generate-tests` | Окремо тести для entry-point |
-| `POST` | `/:id/generate-program` | Генерація всього модуля `{ includeTests }` |
+| `POST` | `/:id/generate-program` | Генерація всього модуля `{ includeTests }` — повертає `verificationReport` якщо Plan B path |
 | `POST` | `/program-types` | TypeScript interfaces для programIds[] |
 | `POST` | `/db-types` | TypeScript row-types для DB-таблиць |
 | `POST` | `/consistency-check` | Перевірка сумісності programIds[] |
@@ -539,11 +663,11 @@ POST /api/programs/upload
        ├─ writeFileSync() → uploads/{id}.cbl
        ├─ updateFilePath()
        ├─ backfillEdgesForNewProgram()
-       ├─ parseCobol() / parseCProgram() → chunks
+       ├─ parseCobol() → chunks
        ├─ insertChunks()
        └─ runAnalysisCore() [fire-and-forget]
             ├─ getProvider(settings)
-            ├─ runAnalysis() / runCAnalysis()
+            ├─ runAnalysis()
             │    ├─ extractLinkageVars(), extractCalls(), ...  (структурний парсинг)
             │    ├─ buildStructural() + buildContext()
             │    ├─ estimateTokens() → one-step або two-step
@@ -556,19 +680,38 @@ POST /api/programs/upload
 SSE events: parsing → step 1/2 → step 2/2 → done / failed / cancelled
 ```
 
-### Генерація коду
+### Генерація одного entry-point
 
 ```
 POST /api/programs/:id/generate  { condition, includeTests }
   └─ generateEntryPoint(programId, condition)
        ├─ loadProgramData()
-       │    ├─ findProgramById() + getAnalysisByProgramId() + getChunksByProgramId()
-       │    ├─ deserializePerformGraph()
-       │    └─ readFileSync() → extractTuxTableSchemas() + extractWsConstants()
        ├─ selectRelevantChunks() — транзитивне розширення через performGraph
        ├─ buildCodeGenContext()
        ├─ provider.generateCode(context)
        └─ [опційно] buildTestGenContext() → provider.generateTests()
+```
+
+### Генерація цілого модуля (Hybrid Neuro-Symbolic Pipeline)
+
+```
+POST /api/programs/:id/generate-program  { includeTests }
+  └─ generateProgram(programId)
+       ├─ loadProgramData()
+       │
+       ├─ [Plan B path — якщо structural_cache.linkageVars не порожній]
+       │    ├─ generateSkeleton()          → TS з [AI_HOLE] блоками
+       │    ├─ extractHoles()              → [{id, paragraphs, reads, writes, pattern}]
+       │    ├─ Promise.all(holes.map →
+       │    │    holeToContext()           → фокусний контекст (~200 токенів)
+       │    │    provider.fillHole()       → { code }  (temperature 0.2)
+       │    │  )
+       │    ├─ assembleSkeleton()          → фінальний TS-файл
+       │    └─ buildVerificationReport()   → { confidence, testSuite }
+       │
+       └─ [Fallback — програми без IR]
+            ├─ buildProgramContext()       → повний контекст
+            └─ provider.generateProgram() → assembleCode()
 ```
 
 ### Batch-аналіз
@@ -590,8 +733,8 @@ POST /api/applications/:id/analyze  { mode: 'parallel' }
 
 | Директорія | Файли | Що тестується |
 |---|---|---|
-| `tests/parser/` | `cobolParser.test.js` (56), `cobolExtractor.test.js` (33), `cParser.test.js` (46) | Парсинг: fixed-format, chunking, CALL-вилучення, SQL-regex, condition names, C-функції |
-| `tests/ai/` | `orchestrator.test.js` (35), `cOrchestrator.test.js` (12) | Token-стратегія, two-step логіка, buildStructural, mapResult, filterEntryPoints |
+| `tests/parser/` | `cobolParser.test.js` (56), `cobolExtractor.test.js` (33) | Парсинг: fixed-format, chunking, CALL-вилучення, SQL-regex, condition names |
+| `tests/ai/` | `orchestrator.test.js` (35) | Token-стратегія, two-step логіка, buildStructural, mapResult, filterEntryPoints |
 | `tests/routes/` | `programs.test.js` (9), `applications.test.js` (4), `settings.test.js` (4) | HTTP endpoint контракти, статус-коди, SSE |
 | `tests/services/` | `batchService.test.js` (3), `graphService.test.js` (7) | Concurrency limit, скасування batch, backfill edges |
 

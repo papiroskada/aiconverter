@@ -1,0 +1,342 @@
+@startuml DeterministicLayer
+
+title Deterministic Layer — Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam classFontSize 12
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 60
+
+skinparam class {
+  BackgroundColor #F8F9FA
+  BorderColor     #495057
+  HeaderBackgroundColor #DEE2E6
+  ArrowColor      #495057
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor     #ADB5BD
+  FontStyle       bold
+}
+skinparam enum {
+  BackgroundColor #FFF3CD
+  BorderColor     #856404
+}
+
+' ══════════════════════════════════════════════════════
+' PARSER MODULES
+' ══════════════════════════════════════════════════════
+package "parser/" {
+
+  class CobolParser <<module>> {
+    + preprocessCobol(text) : string
+    + parseCobol(text) : Chunk[]
+    + extractLinkageVars(text) : CobolVariable[]
+    + extractWorkingStorage(text) : CobolVariable[]
+    + extractEvaluateDispatch(text) : EvaluateDispatch[]
+    + extractPerformGraph(chunks) : PerformNode[]
+    + resolveTransitive(name, graph) : string[]
+    + collectMissingParagraphs(graph) : string[]
+    + extractEnumCandidates(wsVars, lv) : EnumCandidate[]
+    + extractRedefinesMap(wsVars, lv) : RedefinesEntry[]
+  }
+
+  class CobolExtractor <<module>> {
+    + extractCalls(text) : ExternalCall[]
+    + extractExecSql(text) : SqlTableRef[]
+    + extractTuxTables(text) : TuxTableRef[]
+    + extractConstructs(text) : string[]
+    + extractErrorEntries(text) : ErrorEntry[]
+    + extractTuxTableSchemas(text) : Map<string, TuxField[]>
+    + extractWsConstants(text) : WsConstant[]
+    + buildPicTypeMap(wsVars, lv) : Map<string, JsType>
+    + extractDataFlow(chunks) : DataFlowEntry[]
+  }
+
+}
+
+' ══════════════════════════════════════════════════════
+' STRUCTURAL CACHE + DATA TYPES
+' ══════════════════════════════════════════════════════
+package "StructuralCache (programs.structural_cache)" {
+
+  class StructuralCache {
+    + preDispatchNames : string[]
+    + missingParagraphs : string[]
+    + constructs : string[]
+    + selectFiles : string[]
+    + picTypes : Map<string, JsType>
+  }
+
+  ' — Variable Symbol Table —
+  package "Variable Symbol Table" {
+
+    class CobolVariable {
+      + level : string
+      + name : string
+      + pic : string | null
+      + comp : "COMP" | "COMP-3" | "COMP-5" | null
+      + redefines : string | null
+      + direction : "in" | "out" | null
+    }
+
+    note right of CobolVariable
+      comp і direction — plain string literals,
+      не enum-типи. direction виводиться
+      з імені поля (суфікс I/O).
+      inout відсутній — inferDirection()
+      повертає лише "in", "out" або null.
+    end note
+
+    class Condition88 {
+      + name : string
+    }
+
+    class ConditionValue {
+      + value : string | null
+      + from  : string | null
+      + to    : string | null
+    }
+
+    CobolVariable *-- "0..*" Condition88    : conditions
+    Condition88   *-- "1..*" ConditionValue : values
+  }
+
+  ' — Perform Call Graph —
+  package "Perform Call Graph" {
+
+    class PerformNode {
+      + paragraphName : string
+      + calledParagraphs : string[]
+    }
+
+    note right of PerformNode
+      Serialised Map<string, Set<string>>.
+      resolveTransitive() expands
+      chains via DFS for context
+      building and hole annotation.
+    end note
+  }
+
+  ' — Evaluate Dispatch Map —
+  package "Evaluate Dispatch Map" {
+
+    class EvaluateDispatch {
+      + evaluateSubject : string
+    }
+
+    class DispatchEntry {
+      + whenValue : string
+      + performParagraph : string
+    }
+
+    EvaluateDispatch *-- "1..*" DispatchEntry : entries
+  }
+
+  ' — External & DB Metadata —
+  package "External & DB Metadata" {
+
+    class ExternalCall {
+      + program : string
+      + using : string [0..1]
+    }
+
+    class SqlTableRef {
+      + table : string
+      + operation : string
+      + fields : string[]
+      + keyFields : string[]
+    }
+
+    class TuxTableRef {
+      + table : string
+      + operation : string
+      + keyFields : string[]
+    }
+
+    class TuxField {
+      + name : string
+      + camelName : string
+      + pic : string
+      + type : JsType
+    }
+
+    class WsConstant {
+      + name : string
+      + value : string
+      + camelName : string
+    }
+
+    class ErrorEntry {
+      + seqNo : int
+      + dataElement : string [0..1]
+    }
+
+    TuxTableRef ..> TuxField : schemas via\nextractTuxTableSchemas
+  }
+
+  ' — Plan A: IR Enrichment —
+  package "Plan A — IR Enrichment" {
+
+    class EnumCandidate {
+      + parentField : string
+      + parentPic : string [0..1]
+      + tsName : string
+    }
+
+    class EnumValue {
+      + name : string
+      + tsName : string
+      + value : string
+    }
+
+    class RedefinesEntry {
+      + field : string
+      + redefines : string
+      + level : string
+      + pic : string | null
+      + comp : "COMP" | "COMP-3" | "COMP-5" | null
+    }
+
+    class DataFlowEntry {
+      + paragraphName : string
+      + reads : string[]
+      + writes : string[]
+    }
+
+    enum JsType {
+      string
+      number
+      Decimal
+      object
+    }
+
+    EnumCandidate *-- "1..*" EnumValue : values
+  }
+
+  ' StructuralCache composition
+  StructuralCache *-- "0..*" CobolVariable    : linkageVars\nwsVars
+  StructuralCache *-- "0..*" ExternalCall     : calls
+  StructuralCache *-- "0..*" SqlTableRef      : execSqlTables
+  StructuralCache *-- "0..*" TuxTableRef      : tuxTables
+  StructuralCache *-- "0..*" ErrorEntry       : errorEntries
+  StructuralCache *-- "0..*" EvaluateDispatch : evaluateDispatch
+  StructuralCache *-- "0..*" PerformNode      : performGraph
+  StructuralCache *-- "0..*" EnumCandidate    : enumCandidates
+  StructuralCache *-- "0..*" RedefinesEntry   : redefines
+  StructuralCache *-- "0..*" DataFlowEntry    : dataFlow
+  StructuralCache --> JsType                  : picTypes values
+}
+
+' ══════════════════════════════════════════════════════
+' PLAN B — MECHANICAL SKELETON
+' ══════════════════════════════════════════════════════
+package "codeGen/mechanicalTransformer.js (Plan B)" {
+
+  class MechanicalTransformer <<module>> {
+    + generateSkeleton(program, analysis,\n  chunks, cache, settings, wsConstants) : string
+    + extractHoles(skeleton) : AiHole[]
+    + holeToContext(hole, chunks,\n  skeleton, settings, tableSchemas) : HoleContext
+    + assembleSkeleton(skeleton,\n  filledHoles) : string
+  }
+
+  class AiHole {
+    + id : string
+    + paragraphs : string[]
+    + reads : string[]
+    + writes : string[]
+    + pattern : string
+    + startIndex : int
+    + endIndex : int
+  }
+
+  class HoleContext {
+    + id : string
+    + surroundingCode : string
+    + cobolText : string
+    + reads : string[]
+    + writes : string[]
+    + pattern : string
+    + tableSchemas : string
+    + patterns : CodePatterns
+  }
+
+  MechanicalTransformer ..> AiHole     : produces
+  MechanicalTransformer ..> HoleContext : produces per hole\nfor AI fill
+}
+
+' ══════════════════════════════════════════════════════
+' PLAN A — DETERMINISTIC TYPE GENERATION
+' ══════════════════════════════════════════════════════
+package "codeGen/typeGeneration.js (Plan A)" {
+
+  class TypeGeneration <<module>> {
+    + generateProgramTypes(programIds) : string
+    + generateDbTypes(programIds) : string
+  }
+}
+
+' ══════════════════════════════════════════════════════
+' PLAN D — VERIFICATION
+' ══════════════════════════════════════════════════════
+package "codeGen/verificationService.js (Plan D)" {
+
+  class VerificationService <<module>> {
+    + computeConfidence(skeleton, holes,\n  analysis, cache) : ConfidenceReport
+    + generateTestSuite(program,\n  analysis, cache) : string
+    + buildVerificationReport(program,\n  analysis, cache, skeleton, holes) : VerificationReport
+  }
+
+  class ConfidenceReport {
+    + score : int
+    + mechanicalPct : int
+    + typeCompleteness : int
+    + holeCoveragePct : int
+    + holeCount : int
+  }
+
+  class FlaggedItem {
+    + section : string
+    + reason : string
+    + severity : "warning" | "critical"
+  }
+
+  class VerificationReport {
+    + confidence : ConfidenceReport
+    + testSuite : string
+  }
+
+  VerificationService  ..> VerificationReport : produces
+  VerificationReport   *-- ConfidenceReport   : confidence
+  ConfidenceReport     *-- "0..*" FlaggedItem : flaggedForReview
+}
+
+' ══════════════════════════════════════════════════════
+' MODULE → DATA TYPE FLOW
+' ══════════════════════════════════════════════════════
+CobolParser    ..> CobolVariable    : produces
+CobolParser    ..> EnumCandidate    : extractEnumCandidates()
+CobolParser    ..> RedefinesEntry   : extractRedefinesMap()
+CobolParser    ..> EvaluateDispatch : extractEvaluateDispatch()
+CobolParser    ..> PerformNode      : extractPerformGraph()
+
+CobolExtractor ..> ExternalCall  : extractCalls()
+CobolExtractor ..> SqlTableRef   : extractExecSql()
+CobolExtractor ..> TuxTableRef   : extractTuxTables()
+CobolExtractor ..> DataFlowEntry : extractDataFlow()
+CobolExtractor ..> JsType        : buildPicTypeMap()
+CobolExtractor ..> WsConstant    : extractWsConstants()
+CobolExtractor ..> TuxField      : extractTuxTableSchemas()
+
+CobolParser    ..> StructuralCache : feeds →\norchestrator
+CobolExtractor ..> StructuralCache : feeds →\norchestrator
+
+StructuralCache ..> MechanicalTransformer : input cache
+StructuralCache ..> TypeGeneration        : linkageVars\n+ picTypes
+StructuralCache ..> VerificationService   : input cache
+
+MechanicalTransformer ..> VerificationService : skeleton\n+ AiHole[]
+
+@enduml
