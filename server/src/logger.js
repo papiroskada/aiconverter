@@ -12,6 +12,9 @@ export const logger = {
   start(programName, message) {
     console.log(`${timestamp()} ${programTag(programName)} ${pc.yellow('▶')} ${message}`)
   },
+  info(programName, message) {
+    console.log(`${timestamp()} ${programTag(programName)} ${pc.blue('ℹ')} ${message}`)
+  },
   done(programName, message, durationMs) {
     const duration = durationMs != null ? pc.gray(` (${durationMs}ms)`) : ''
     console.log(`${timestamp()} ${programTag(programName)} ${pc.green('✓')} ${message}${duration}`)

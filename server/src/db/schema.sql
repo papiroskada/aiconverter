@@ -152,3 +152,52 @@ ALTER TABLE program_analysis
   ADD COLUMN IF NOT EXISTS generated_language TEXT,
   ADD COLUMN IF NOT EXISTS generated_notes    TEXT,
   ADD COLUMN IF NOT EXISTS generated_at       TIMESTAMP;
+
+-- ── Auth & RBAC ─────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS users (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'developer', 'viewer')),
+  is_active     BOOLEAN NOT NULL DEFAULT true,
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  revoked    BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+  action        TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id   UUID,
+  ip            TEXT,
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Encrypted API keys — separate from plaintext settings columns
+ALTER TABLE settings
+  ADD COLUMN IF NOT EXISTS claude_api_key_enc TEXT,
+  ADD COLUMN IF NOT EXISTS openai_api_key_enc TEXT;
+
+-- Per-user per-entry-point review flags
+CREATE TABLE IF NOT EXISTS program_flags (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  program_id UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  condition  TEXT NOT NULL,
+  flag       TEXT NOT NULL CHECK (flag IN ('approved', 'warning', 'deprecated')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (program_id, user_id, condition)
+);

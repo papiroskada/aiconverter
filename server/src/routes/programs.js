@@ -3,15 +3,25 @@ import multer from 'multer'
 import { getAllPrograms, findProgramById } from '../models/programs.js'
 import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag, patchEntryPoints, saveGeneratedCode, getGeneratedCode } from '../models/programAnalysis.js'
+import { upsertFlag, deleteFlag, getFlagsForProgram } from '../models/programFlags.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
 import { generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 import { buildVerificationReport } from '../services/codeGen/verificationService.js'
+import { requireRole } from '../middleware/auth.js'
+import { logAudit } from '../models/auditLog.js'
 
 const router = Router()
-const upload = multer({ storage: multer.memoryStorage() })
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/\.(cbl|cob|cpy|c|u|s|txt)$/i.test(file.originalname)) cb(null, true)
+    else cb(Object.assign(new Error('Unsupported file type'), { status: 400 }))
+  },
+})
 
 import pool from '../db/client.js'
 
@@ -138,12 +148,13 @@ router.get('/:id', async (req, res, next) => {
     const program = await findProgramById(req.params.id)
     if (!program) return res.status(404).json({ error: 'Not found' })
 
-    const [analysis, chunks, edges] = await Promise.all([
+    const [analysis, chunks, edges, userFlags] = await Promise.all([
       getAnalysisByProgramId(req.params.id),
       getChunksByProgramId(req.params.id),
       getEdgesForProgram(req.params.id),
+      getFlagsForProgram(req.params.id),
     ])
-    res.json({ ...program, analysis, chunks, edges })
+    res.json({ ...program, analysis, chunks, edges, userFlags })
   } catch (err) {
     next(err)
   }
@@ -182,12 +193,13 @@ router.get('/:id/chunks', async (req, res, next) => {
 })
 
 // POST /api/programs/upload
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', requireRole('developer', 'admin'), upload.single('file'), async (req, res) => {
   try {
     const applicationId = req.body.application_id || null
     const file = req.file
     if (!file) return res.status(400).json({ error: 'No file provided' })
     const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId)
+    await logAudit(req.user.sub, 'upload', 'program', program.id, req.ip)
     res.status(202).json({ id: program.id, status: program.status })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
@@ -195,7 +207,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 })
 
 // POST /api/programs/:id/analyze  (re-analyze)
-router.post('/:id/analyze', async (req, res) => {
+router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res) => {
   try {
     await reanalyze(req.params.id, sseEmitters)
     res.json({ status: 'analyzing' })
@@ -205,18 +217,19 @@ router.post('/:id/analyze', async (req, res) => {
 })
 
 // POST /api/programs/:id/generate — delegates to generate-program (kept for backwards compat)
-router.post('/:id/generate', async (req, res) => {
+router.post('/:id/generate', requireRole('developer', 'admin'), async (req, res) => {
   try {
     const { includeTests = false } = req.body ?? {}
     const result = await generateProgram(req.params.id, { includeTests })
+    await logAudit(req.user.sub, 'generate', 'program', req.params.id, req.ip)
     res.json(result)
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }
 })
 
-// POST /api/programs/:id/generate-tests  — standalone test generation for one entry point
-router.post('/:id/generate-tests', async (req, res, next) => {
+// POST /api/programs/:id/generate-tests
+router.post('/:id/generate-tests', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
     const result = await generateEntryPointTests(req.params.id, req.body.condition ?? null)
     res.json(result)
@@ -247,7 +260,7 @@ router.get('/:id/verification-report', async (req, res, next) => {
 })
 
 // POST /api/programs/:id/generate-program
-router.post('/:id/generate-program', async (req, res, next) => {
+router.post('/:id/generate-program', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
     const result = await generateProgram(req.params.id, { includeTests: req.body?.includeTests ?? false })
     saveGeneratedCode(req.params.id, {
@@ -256,14 +269,16 @@ router.post('/:id/generate-program', async (req, res, next) => {
       language: result.language ?? 'typescript',
       notes: Array.isArray(result.notes) ? result.notes.join(' · ') : (result.notes ?? null),
     }).catch(() => {})
+    await logAudit(req.user.sub, 'generate', 'program', req.params.id, req.ip)
     res.json(result)
   } catch (err) { next(err) }
 })
 
 // DELETE /api/programs/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('developer', 'admin'), async (req, res) => {
   try {
     await deleteProgram(req.params.id, sseEmitters)
+    await logAudit(req.user.sub, 'delete', 'program', req.params.id, req.ip)
     res.status(204).send()
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
@@ -280,16 +295,21 @@ router.post('/:id/cancel', async (req, res, next) => {
   }
 })
 
-// PATCH /api/programs/:id/flags
+// PATCH /api/programs/:id/flags — sets or clears the current user's flag for one entry point
 router.patch('/:id/flags', async (req, res) => {
   try {
     const { condition, flag } = req.body
     if (!condition) return res.status(400).json({ error: 'condition is required' })
-    if (flag !== null && flag !== undefined && !['warning', 'deprecated'].includes(flag)) {
-      return res.status(400).json({ error: 'flag must be warning, deprecated, or null' })
+    if (flag !== null && flag !== undefined && !['approved', 'warning', 'deprecated'].includes(flag)) {
+      return res.status(400).json({ error: 'flag must be approved, warning, deprecated, or null' })
     }
-    const flags = await updateFlag(req.params.id, condition, flag ?? null)
-    res.json(flags)
+    if (flag === null || flag === undefined) {
+      await deleteFlag(req.params.id, req.user.sub, condition)
+    } else {
+      await upsertFlag(req.params.id, req.user.sub, condition, flag)
+    }
+    const userFlags = await getFlagsForProgram(req.params.id)
+    res.json(userFlags)
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }

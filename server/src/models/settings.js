@@ -1,4 +1,5 @@
 import pool from '../db/client.js'
+import { encrypt, decrypt } from '../utils/crypto.js'
 
 const DEFAULTS = {
   ai_provider: 'claude',
@@ -16,9 +17,23 @@ const DEFAULTS = {
   code_source_mode:      'with_source',
 }
 
+// Fields that are stored encrypted in the DB (_enc columns)
+const ENCRYPTED_FIELDS = ['claude_api_key', 'openai_api_key']
+
 export async function getSettings() {
+  // Env vars take precedence over DB values
   const { rows } = await pool.query('SELECT * FROM settings WHERE id = 1')
-  return rows[0] ?? DEFAULTS
+  const row = rows[0] ?? {}
+
+  const result = { ...DEFAULTS, ...row }
+
+  // Decrypt encrypted fields; fall back to env var if DB is empty
+  result.claude_api_key = process.env.CLAUDE_API_KEY
+    ?? (row.claude_api_key_enc ? decrypt(row.claude_api_key_enc) : row.claude_api_key ?? null)
+  result.openai_api_key = process.env.OPENAI_API_KEY
+    ?? (row.openai_api_key_enc ? decrypt(row.openai_api_key_enc) : row.openai_api_key ?? null)
+
+  return result
 }
 
 export async function upsertSettings(fields) {
@@ -28,8 +43,18 @@ export async function upsertSettings(fields) {
   )
   if (Object.keys(updates).length === 0) return false
 
-  const cols = Object.keys(updates)
-  const vals = Object.values(updates)
+  // Encrypt sensitive fields before writing
+  const dbUpdates = {}
+  for (const [k, v] of Object.entries(updates)) {
+    if (ENCRYPTED_FIELDS.includes(k)) {
+      dbUpdates[`${k}_enc`] = v ? encrypt(v) : null
+    } else {
+      dbUpdates[k] = v
+    }
+  }
+
+  const cols = Object.keys(dbUpdates)
+  const vals = Object.values(dbUpdates)
   const setClauses = cols.map((c, i) => `${c} = $${i + 1}`).join(', ')
 
   await pool.query(

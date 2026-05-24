@@ -32,6 +32,15 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
   const controller = new AbortController()
   activeControllers.set(programId, controller)
   const provider = await getProvider(settings)
+
+  const aiProvider = settings.ai_provider ?? 'openai'
+  const aiModel = aiProvider === 'openai'
+    ? (settings.openai_model_interface ?? 'gpt-4o')
+    : (settings.claude_model_interface ?? 'claude-sonnet-4-6')
+  logger.info(programName, `Starting analysis — provider: ${aiProvider}, model: ${aiModel}`)
+  emit('progress', { stage: 'analysis', message: `Starting analysis (${aiProvider} / ${aiModel})...` })
+
+  const t0 = Date.now()
   try {
     const program = await findProgramById(programId)
 
@@ -60,15 +69,16 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
       })
     }
     await updateProgramStatus(programId, 'analyzed', { analyzed_at: true })
+    logger.done(programName, 'Analysis complete', Date.now() - t0)
     emit('done', { programId })
   } catch (err) {
     if (err.name === 'AbortError') {
-      logger.done(programName, 'Analysis cancelled')
+      logger.done(programName, 'Analysis cancelled', Date.now() - t0)
       await updateProgramStatus(programId, 'pending')
       emit('cancelled', { programId })
       return
     }
-    logger.error(programName, `Analysis failed: ${err.message}`)
+    logger.error(programName, `Analysis failed: ${err.message}`, Date.now() - t0)
     emit('progress', { stage: 'failed', message: `Analysis failed: ${err.message}` })
     await updateProgramStatus(programId, 'failed')
     emit('failed', { error: err.message })
@@ -130,11 +140,9 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
   logger.done(programName, `Parsed ${savedChunks.length} chunks`, parseDuration)
   emit('progress', { stage: 'parsing', message: `Parsed ${savedChunks.length} chunks`, durationMs: parseDuration })
 
-  // Single-file: start analysis immediately (fire-and-forget)
-  if (!applicationId) {
-    const settings = await getSettings()
-    runAnalysisCore(program.id, programName, cobolText, savedChunks, emit, settings)
-  }
+  // Always start analysis immediately after upload (fire-and-forget)
+  const settings = await getSettings()
+  runAnalysisCore(program.id, programName, cobolText, savedChunks, emit, settings)
 
   return program
 }
@@ -181,8 +189,13 @@ export async function reanalyze(programId, sseEmitters) {
 export async function deleteProgram(programId, sseEmitters) {
   const program = await findProgramById(programId)
   if (!program) throw Object.assign(new Error('Not found'), { status: 404 })
-  if (program.status === 'analyzing') {
-    throw Object.assign(new Error('Cannot delete program while analyzing'), { status: 409 })
+
+  // If analysis is actively running (controller exists in memory) — cancel it first.
+  // A stale 'analyzing' status from a previous server run is not a blocker.
+  const controller = activeControllers.get(programId)
+  if (controller) {
+    controller.abort()
+    activeControllers.delete(programId)
   }
 
   await deleteProgramById(programId)

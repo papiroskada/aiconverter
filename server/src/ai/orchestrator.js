@@ -218,6 +218,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   let enumCandidates, redefines, picTypes, dataFlow
 
   if (structuralCacheIn) {
+    logger.info(programName, 'Using cached structural data — skipping extraction')
     linkageVars      = structuralCacheIn.linkageVars
     wsVars           = structuralCacheIn.wsVars
     calls            = structuralCacheIn.calls
@@ -235,6 +236,9 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     picTypes         = structuralCacheIn.picTypes ?? {}
     dataFlow         = structuralCacheIn.dataFlow ?? {}
   } else {
+    const tExtract = Date.now()
+    logger.start(programName, 'Extracting structural data...')
+    emit('progress', { stage: 'analysis', message: 'Extracting structural data...' })
     linkageVars      = extractLinkageVars(cobolText)
     wsVars           = extractWorkingStorage(cobolText)
     calls            = extractCalls(cobolText)
@@ -251,11 +255,14 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     redefines        = extractRedefinesMap(wsVars, linkageVars)
     picTypes         = buildPicTypeMap(wsVars, linkageVars)
     dataFlow         = extractDataFlow(paragraphChunks)
+    logger.done(programName, `Structural extraction done — ${paragraphChunks.length} paragraphs, ${calls.length} calls, ${execSqlTables.length} SQL tables`, Date.now() - tExtract)
   }
 
   const structural = buildStructural(linkageVars, calls, execSqlTables, tuxTables, selectFiles, constructs, wsVars, errorEntries, evaluateDispatch, preDispatchNames, missingParagraphs)
   const fullContext = buildContext(structural, paragraphChunks)
+  const tokenEstimate = estimateTokens(fullContext)
 
+  logger.info(programName, `Context built — ~${tokenEstimate.toLocaleString()} tokens, ${paragraphChunks.length} paragraphs`)
   logAndEmit(emit, programName, 'start', { stage: 'analysis', message: 'Analysing business logic...' })
   emit('progress', { stage: 'step', step: 1, total: 2 })
 
@@ -271,9 +278,13 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
     enumCandidates, redefines, picTypes, dataFlow,
   }
 
-  if (estimateTokens(fullContext) <= TOKEN_LIMIT) {
-    // ── Small file: one call with full paragraph code ──────────────────────
+  if (tokenEstimate <= TOKEN_LIMIT) {
+    // ── Small file: one AI call with full paragraph code ───────────────────
+    logger.start(programName, `AI call: extractBusinessAnalysis (~${tokenEstimate.toLocaleString()} tokens)`)
+    emit('progress', { stage: 'analysis', message: 'Sending to AI for analysis...' })
+    const tAi = Date.now()
     spec = await provider.extractBusinessAnalysis(fullContext, signal)
+    logger.done(programName, 'AI call complete', Date.now() - tAi)
     logAndEmit(emit, programName, 'done', { stage: 'analysis', message: 'Analysis complete' })
     emit('progress', { stage: 'step', step: 2, total: 2 })
     return { result: mapResult(spec, linkageVars, preDispatchNames, false, execSqlTables, tuxTables, evaluateDispatch), structuralCache: _buildCache() }
@@ -282,13 +293,16 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
   // ── Large file: two-step ───────────────────────────────────────────────
   const snippetLines = estimateTokens(buildContext(structural, paragraphChunks, 5)) > MODEL_LIMIT ? 3 : 5
   const snippetContext = buildContext(structural, paragraphChunks, snippetLines)
+  const snippetTokens = estimateTokens(snippetContext)
 
   logAndEmit(emit, programName, 'start', {
     stage: 'analysis',
-    message: `Large file — step 1: identifying entry points (${snippetLines}-line snippets)`,
+    message: `Large file — step 1: identifying entry points (${snippetLines}-line snippets, ~${snippetTokens.toLocaleString()} tokens)`,
   })
-
+  logger.start(programName, `AI call step 1: extractBusinessAnalysis with snippets (~${snippetTokens.toLocaleString()} tokens)`)
+  const tStep1 = Date.now()
   spec = await provider.extractBusinessAnalysis(snippetContext, signal)
+  logger.done(programName, `Step 1 complete — ${spec.entryPoints?.length ?? 0} entry point(s) found`, Date.now() - tStep1)
 
   const entryPoints = spec.entryPoints ?? []
   if (entryPoints.length > 0) {
@@ -296,10 +310,9 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
       stage: 'analysis',
       message: `Step 2: analysing ${entryPoints.length} entry point(s) in detail`,
     })
-
     emit('progress', { stage: 'step', step: 2, total: 2 })
 
-    // parallel detail analysis per entry point
+    const tStep2 = Date.now()
     const detailed = await Promise.all(
       entryPoints.map(async (ep) => {
         if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' })
@@ -307,6 +320,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
         if (names.length === 0) return ep
         try {
           const epContext = buildEntryPointContext(structural, paragraphChunks, names, performGraph, preDispatchNames)
+          logger.info(programName, `AI call step 2: analyzeEntryPoint "${ep.businessName}" (~${estimateTokens(epContext).toLocaleString()} tokens)`)
           const detail = await provider.analyzeEntryPoint(ep.condition, ep.businessName, epContext, signal)
           return { ...ep, ...detail }
         } catch (err) {
@@ -316,6 +330,7 @@ export async function runAnalysis({ cobolText, chunks, provider, emit, programNa
         }
       })
     )
+    logger.done(programName, `Step 2 complete — ${entryPoints.length} entry point(s) analysed`, Date.now() - tStep2)
     spec = { ...spec, entryPoints: detailed }
   }
 

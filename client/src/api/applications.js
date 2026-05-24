@@ -1,25 +1,31 @@
+import { apiFetch, apiJson } from './client.js'
+
 const BASE = '/api/applications'
 
+export async function fetchApplications() {
+  const res = await apiFetch(BASE)
+  if (!res.ok) throw new Error('Failed to fetch applications')
+  return res.json()
+}
+
+export async function fetchApplication(id) {
+  const res = await apiFetch(`${BASE}/${id}`)
+  if (!res.ok) throw new Error('Failed to fetch application')
+  return res.json()
+}
+
 export async function createApplication(name) {
-  const res = await fetch(BASE, {
+  const res = await apiJson(BASE, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
   if (!res.ok) throw new Error('Failed to create application')
   return res.json()
 }
 
-export async function fetchApplication(id) {
-  const res = await fetch(`${BASE}/${id}`)
-  if (!res.ok) throw new Error('Failed to fetch application')
-  return res.json()
-}
-
-export async function startApplicationAnalysis(id, mode) {
-  const res = await fetch(`${BASE}/${id}/analyze`, {
+export async function startApplicationAnalysis(id, mode = 'sequential') {
+  const res = await apiJson(`${BASE}/${id}/analyze`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
   })
   if (!res.ok) throw new Error('Failed to start analysis')
@@ -27,16 +33,10 @@ export async function startApplicationAnalysis(id, mode) {
 }
 
 export async function cancelApplication(id) {
-  await fetch(`${BASE}/${id}/cancel`, { method: 'POST' })
-}
-
-export async function fetchApplications() {
-  const res = await fetch(BASE)
-  if (!res.ok) throw new Error('Failed to fetch applications')
-  return res.json()
+  await apiFetch(`${BASE}/${id}/cancel`, { method: 'POST' })
 }
 
 export async function deleteApplication(id) {
-  const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' })
+  const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete application')
 }

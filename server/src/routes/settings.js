@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { getSettings, upsertSettings } from '../models/settings.js'
+import { requireRole } from '../middleware/auth.js'
+import { logAudit } from '../models/auditLog.js'
 
 const router = Router()
 
@@ -11,7 +13,8 @@ function maskKey(key) {
   return `${prefix}••••${suffix}`
 }
 
-router.get('/', async (req, res, next) => {
+// GET — admin only
+router.get('/', requireRole('admin'), async (req, res, next) => {
   try {
     const s = await getSettings()
     res.json({
@@ -19,19 +22,17 @@ router.get('/', async (req, res, next) => {
       claude_api_key: maskKey(s.claude_api_key),
       openai_api_key: maskKey(s.openai_api_key),
     })
-  } catch (err) {
-    next(err)
-  }
+  } catch (err) { next(err) }
 })
 
-router.put('/', async (req, res, next) => {
+// PUT — admin only
+router.put('/', requireRole('admin'), async (req, res, next) => {
   try {
     const updated = await upsertSettings(req.body)
     if (updated === false) return res.status(400).json({ error: 'No valid fields provided' })
+    await logAudit(req.user.sub, 'settings_change', 'settings', null, req.ip)
     res.status(204).send()
-  } catch (err) {
-    next(err)
-  }
+  } catch (err) { next(err) }
 })
 
 export default router

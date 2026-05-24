@@ -10,13 +10,15 @@ import {
 import { getProgramsByApplicationId, deleteProgramsByApplicationId } from '../models/programs.js'
 import { startBatchAnalysis, cancelBatch } from '../services/batchService.js'
 import { cancelProgram } from '../services/analysisService.js'
+import { requireRole } from '../middleware/auth.js'
+import { logAudit } from '../models/auditLog.js'
 
 const router = Router()
 
 // SSE emitter registry: applicationId → Set of response objects
 export const appSseEmitters = new Map()
 
-router.post('/', async (req, res, next) => {
+router.post('/', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
     const { name } = req.body
     if (!name?.trim()) return res.status(400).json({ error: 'name is required' })
@@ -66,7 +68,7 @@ router.get('/:id/stream', (req, res) => {
   })
 })
 
-router.post('/:id/analyze', async (req, res, next) => {
+router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
     const application = await findApplicationById(req.params.id)
     if (!application) return res.status(404).json({ error: 'Not found' })
@@ -79,13 +81,14 @@ router.post('/:id/analyze', async (req, res, next) => {
 })
 
 // DELETE /api/applications/:id — cancels any running batch, deletes all programs + files + the application
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
     cancelBatch(req.params.id)
     const programs = await getProgramsByApplicationId(req.params.id)
     for (const p of programs) cancelProgram(p.id)
     await deleteProgramsByApplicationId(req.params.id)
     await deleteApplicationById(req.params.id)
+    await logAudit(req.user.sub, 'delete', 'application', req.params.id, req.ip)
     res.status(204).send()
     // File cleanup after response — don't block the client
     for (const p of programs) {
