@@ -171,6 +171,8 @@ SECTION METADATA:
 - Pattern: ${ctx.pattern}
 - Reads from: ${ctx.reads.join(', ') || 'none'}
 - Writes to:  ${ctx.writes.join(', ') || 'none'}
+${ctx.steps?.length ? `\nBUSINESS STEPS — implement these in order (authoritative description of this section's logic):\n${ctx.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
+${ctx.wsConstants ? `\nWORKING STORAGE CONSTANTS (use exact values, do not invent alternatives):\n${ctx.wsConstants}\n` : ''}
 ${ctx.tableSchemas ? `\nDB TABLE FIELDS (camelCase names to use in queries):\n${ctx.tableSchemas}` : ''}
 TARGET PATTERNS — use exactly:
 - DB read:  ${ctx.patterns.dbRead}
@@ -184,6 +186,8 @@ Return ONLY valid JSON:
 
 Rules:
 - Implement the COBOL logic from the source above — do not invent logic not present in the source
+- If BUSINESS STEPS are provided, treat them as the primary implementation guide (they clarify intent where COBOL is hard to read)
+- For shared helper functions (returning boolean): return false early when the check fails; set error fields in output before returning false
 - Use async/await for all DB operations
 - Use camelCase field names (e.g. CLURI-PRS-MD → cluriPrsMd)
 - Do not wrap in a function definition — return only the body statements

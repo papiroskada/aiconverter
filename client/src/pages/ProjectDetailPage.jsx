@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import UploadDialog from '@/features/programs/UploadDialog.jsx'
 import ProgramDetail from '@/features/detail/ProgramDetail.jsx'
 import { MiniPipeline } from '@/components/AnalysisPipeline.jsx'
+import AppCodeTab from '@/features/code/AppCodeTab.jsx'
 
 const STATUS_CONFIG = {
   analyzed:  { label: 'Analyzed',  dot: 'bg-green-500',              badge: 'default' },
@@ -91,6 +92,7 @@ export default function ProjectDetailPage() {
   const [stepProgress, setStepProgress] = useState(new Map())
   const [programErrors, setProgramErrors] = useState(new Map())
   const [zipping, setZipping] = useState(false)
+  const [view, setView] = useState('programs')
 
   const load = useCallback(async () => {
     try {
@@ -303,8 +305,28 @@ export default function ProjectDetailPage() {
             <Progress value={batchPct} className="h-1.5" />
           </div>
         )}
+      </div>
 
-        <div className="flex items-center gap-3">
+      {/* View tabs */}
+      <div className="px-6 border-b border-border shrink-0 flex items-center gap-0">
+        {['programs', 'code'].map(v => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`capitalize text-sm px-4 py-2.5 border-b-2 transition-colors ${
+              view === v
+                ? 'border-primary text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {v === 'programs' ? 'Programs' : 'Code'}
+          </button>
+        ))}
+      </div>
+
+      {/* Search + filter (programs view only) */}
+      {view === 'programs' && (
+        <div className="px-6 py-2.5 border-b border-border shrink-0 flex items-center gap-3">
           <Input
             placeholder="Search programs…"
             value={search}
@@ -324,10 +346,17 @@ export default function ProjectDetailPage() {
             </SelectContent>
           </Select>
         </div>
-      </div>
+      )}
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto">
+      {/* Code tab */}
+      {view === 'code' && (
+        <div className="flex-1 overflow-hidden">
+          <AppCodeTab programs={programs} applicationId={appId} canEdit={canEdit} />
+        </div>
+      )}
+
+      {/* Programs table */}
+      {view === 'programs' && <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -415,6 +444,8 @@ export default function ProjectDetailPage() {
           </TableBody>
         </Table>
       </div>
+
+      }
 
       {/* Program detail sheet */}
       <Sheet open={!!selectedProgramId} onOpenChange={open => { if (!open) setSelectedProgramId(null) }}>

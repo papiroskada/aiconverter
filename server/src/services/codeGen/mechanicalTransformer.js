@@ -3,8 +3,6 @@ import { toPascal, getPatterns } from './utils.js'
 
 function cobolToCamel(name) {
   if (!name) return 'unknown'
-  // If already camelCase (no hyphens, contains uppercase), return as-is
-  if (!name.includes('-') && /[A-Z]/.test(name)) return name
   return name.toLowerCase().replace(/[^a-z0-9]+(.)/g, (_, c) => c.toUpperCase())
 }
 
@@ -86,6 +84,39 @@ function buildHoleBlock(ep, allNames, dataFlow) {
   return { id, paraList, readList, writeList, pattern }
 }
 
+// Paragraphs that are already represented by the dispatcher — skip as hole roots
+const SKIP_PARAS = new Set([
+  'PROGRAM-LOGIC', 'PROGRAM-LOGIC-EXIT',
+  'BUSINESS-LOGIC', 'BUSINESS-LOGIC-EXIT',
+  'MAIN-LOGIC-END', 'TERMINATION-RTN', 'MAIN',
+])
+
+function buildHoleLines(holeId, allNames, df, ep, includeSteps) {
+  const reads  = new Set()
+  const writes = new Set()
+  for (const n of allNames) {
+    df[n]?.reads?.forEach(r => reads.add(r))
+    df[n]?.writes?.forEach(w => writes.add(w))
+  }
+  const paraList  = [...allNames].join(', ')
+  const readList  = [...reads].slice(0, 10).join(', ')  || 'none'
+  const writeList = [...writes].slice(0, 10).join(', ') || 'none'
+  const pattern   = [...allNames].some(n => n.endsWith('-LOOP')) ? 'cursor loop (SCCLOOP)' : 'sequential'
+  const stepsJson = includeSteps && ep?.steps?.length
+    ? JSON.stringify(ep.steps.slice(0, 6))
+    : null
+  return [
+    `  // [AI_HOLE id="${holeId}"]`,
+    `  // paragraphs: ${paraList}`,
+    `  // reads: ${readList}`,
+    `  // writes: ${writeList}`,
+    `  // pattern: ${pattern}`,
+    stepsJson ? `  // steps: ${stepsJson}` : null,
+    `  throw new Error('not implemented')`,
+    `  // [/AI_HOLE]`,
+  ].filter(Boolean).join('\n')
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 export function generateSkeleton(program, analysis, chunks, structuralCache, settings, wsConstants = []) {
@@ -100,33 +131,86 @@ export function generateSkeleton(program, analysis, chunks, structuralCache, set
     ? new Map(Object.entries(cache.performGraph).map(([k, v]) => [k, new Set(v)]))
     : new Map()
 
-  const name      = program.name
-  const pascal    = toPascal(name)
-  const inputType = pascal + 'Input'
+  const name       = program.name
+  const pascal     = toPascal(name)
+  const inputType  = pascal + 'Input'
   const outputType = pascal + 'Output'
   const eps        = analysis.entry_points ?? []
 
   const interfaces    = buildInterfaces(name, lv, pt)
   const defaultOutput = buildDefaultOutput(name, lv, pt)
 
-  // Entry point functions — each body is one AI hole
+  // ── Detect shared root paragraphs (appear in 2+ EPs, not dispatcher stubs) ──
+  const paraCount = new Map()
+  for (const ep of eps) {
+    for (const p of (ep.paragraphNames ?? [])) {
+      if (!SKIP_PARAS.has(p)) paraCount.set(p, (paraCount.get(p) ?? 0) + 1)
+    }
+  }
+  const sharedRoots = new Set([...paraCount.entries()].filter(([, c]) => c > 1).map(([p]) => p))
+
+  // ── Shared helper functions (one hole each) ────────────────────────────────
+  const sharedFunctions = [...sharedRoots].map(para => {
+    const allNames = resolveTransitive(para, pg)
+    const funcName = cobolToCamel(para)
+    const holeId   = `shared-${para.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+    const holeBody = buildHoleLines(holeId, allNames, df, null, false)
+    return [
+      `// shared: ${para}`,
+      `function ${funcName}(input: ${inputType}, output: ${outputType}): boolean {`,
+      `  // Returns true if check passes; returns false and sets error fields in output on failure.`,
+      holeBody,
+      `  return true`,
+      `}`,
+    ].join('\n')
+  })
+
+  // ── Entry point functions — one hole per root paragraph ────────────────────
   const functions = eps.map(ep => {
-    const funcName = cobolToCamel(ep.businessName ?? ep.condition)
-    const allNames = resolveHoleNames(ep, pg, pre)
-    const { id, paraList, readList, writeList, pattern } = buildHoleBlock(ep, allNames, df)
+    const funcName  = cobolToCamel(ep.businessName ?? ep.condition)
+
+    // Paragraphs owned by this EP (not shared, not dispatcher)
+    const ownRoots = (ep.paragraphNames ?? []).filter(p => !SKIP_PARAS.has(p) && !sharedRoots.has(p))
+
+    // Calls to shared helpers at the top of the function
+    const sharedCalls = (ep.paragraphNames ?? [])
+      .filter(p => sharedRoots.has(p))
+      .map(p => `  if (!${cobolToCamel(p)}(input, output)) return output`)
+
+    // One hole per own root paragraph
+    let holeBlocks = ownRoots.map((para, idx) => {
+      const allNames = resolveTransitive(para, pg)
+      const holeId   = `${buildHoleId(ep)}-${para.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+      return buildHoleLines(holeId, allNames, df, ep, idx === 0)
+    })
+
+    // Fallback: if nothing remains, one big hole with full transitive closure
+    if (!holeBlocks.length) {
+      const allNames = resolveHoleNames(ep, pg, pre)
+      const { id, paraList, readList, writeList, pattern } = buildHoleBlock(ep, allNames, df)
+      holeBlocks = [[
+        `  // [AI_HOLE id="${id}"]`,
+        `  // paragraphs: ${paraList}`,
+        `  // reads: ${readList}`,
+        `  // writes: ${writeList}`,
+        `  // pattern: ${pattern}`,
+        `  throw new Error('not implemented')`,
+        `  // [/AI_HOLE]`,
+      ].join('\n')]
+    }
+
+    const bodyLines = [
+      ...sharedCalls,
+      sharedCalls.length ? '' : null,
+      ...holeBlocks.flatMap((h, i) => (i < holeBlocks.length - 1 ? [h, ''] : [h])),
+    ].filter(l => l !== null)
 
     return [
       `// [MECHANICAL] entry point: ${ep.condition}`,
       `async function ${funcName}(input: ${inputType}): Promise<${outputType}> {`,
       `  const output = createDefaultOutput()`,
       ``,
-      `  // [AI_HOLE id="${id}"]`,
-      `  // paragraphs: ${paraList}`,
-      `  // reads: ${readList}`,
-      `  // writes: ${writeList}`,
-      `  // pattern: ${pattern}`,
-      `  throw new Error('not implemented')`,
-      `  // [/AI_HOLE]`,
+      bodyLines.join('\n'),
       ``,
       `  return output`,
       `}`,
@@ -173,6 +257,7 @@ export function generateSkeleton(program, analysis, chunks, structuralCache, set
     ``,
     defaultOutput,
     ``,
+    ...(sharedFunctions.length ? [...sharedFunctions, ''] : []),
     ...functions,
     ``,
     dispatcher,
@@ -191,14 +276,24 @@ export function extractHoles(skeleton) {
     const reads      = (body.match(/\/\/ reads: (.+)/)      ?? [])[1]?.split(', ').map(s => s.trim()).filter(s => s !== 'none') ?? []
     const writes     = (body.match(/\/\/ writes: (.+)/)     ?? [])[1]?.split(', ').map(s => s.trim()).filter(s => s !== 'none') ?? []
     const pattern    = (body.match(/\/\/ pattern: (.+)/)    ?? [])[1]?.trim() ?? ''
-    holes.push({ id, paragraphs, reads, writes, pattern, startIndex: m.index, endIndex: m.index + m[0].length, fullMatch: m[0] })
+    const stepsRaw   = (body.match(/\/\/ steps: (.+)/)      ?? [])[1]?.trim()
+    let steps = []
+    try { if (stepsRaw) steps = JSON.parse(stepsRaw) } catch { steps = [] }
+    holes.push({ id, paragraphs, reads, writes, pattern, steps, startIndex: m.index, endIndex: m.index + m[0].length, fullMatch: m[0] })
   }
   return holes
 }
 
 // Build focused context object for AI to fill one hole
-export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {}) {
-  const relevantChunks = chunks.filter(c => hole.paragraphs.includes(c.chunk_name))
+export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {}, wsConstants = []) {
+  // Include chunks for listed paragraphs + their SCCLOOP siblings (-LOOP, -END, -EXIT)
+  const relevantChunks = chunks.filter(c => {
+    if (hole.paragraphs.includes(c.chunk_name)) return true
+    return hole.paragraphs.some(p => {
+      const suffix = c.chunk_name.slice(p.length)
+      return c.chunk_name.startsWith(p) && /^-(LOOP|END|EXIT)$/.test(suffix)
+    })
+  })
 
   // Grab ~20 lines before and 10 lines after the hole marker for surrounding code
   const markerIdx = skeleton.indexOf(`// [AI_HOLE id="${hole.id}"]`)
@@ -223,7 +318,22 @@ export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {
 
   const patterns = getPatterns(settings ?? {})
 
-  return { id: hole.id, surroundingCode, cobolText, reads: hole.reads, writes: hole.writes, pattern: hole.pattern, tableSchemas: relevantTables, patterns }
+  const wsConstStr = wsConstants.length
+    ? wsConstants.map(c => `${c.name}: ${JSON.stringify(c.value)}`).join('\n')
+    : null
+
+  return {
+    id:             hole.id,
+    surroundingCode,
+    cobolText,
+    reads:          hole.reads,
+    writes:         hole.writes,
+    pattern:        hole.pattern,
+    steps:          hole.steps ?? [],
+    tableSchemas:   relevantTables,
+    wsConstants:    wsConstStr,
+    patterns,
+  }
 }
 
 // Replace [AI_HOLE] blocks in skeleton with filled code (reverse order to preserve indices)

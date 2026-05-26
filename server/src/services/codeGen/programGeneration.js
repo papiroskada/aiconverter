@@ -39,20 +39,26 @@ export async function generateProgram(programId, { includeTests = false } = {}) 
 
   if (hasIR) {
     // ── Plan B path: mechanical skeleton + AI hole filling ──────────────────
-    const skeleton    = generateSkeleton(program, analysis, paragraphChunks, cache, settings, wsConstants)
-    const holes       = extractHoles(skeleton)
-    const filledHoles = await Promise.all(
-      holes.map(async hole => {
-        const ctx    = holeToContext(hole, paragraphChunks, skeleton, settings, tableSchemas)
-        const result = await provider.fillHole(ctx)
-        return { id: hole.id, code: result.code ?? '  // hole fill failed' }
-      })
-    )
-    code                 = assembleSkeleton(skeleton, filledHoles)
-    notes                = [`Mechanical skeleton: ${holes.length} hole(s) filled by AI`]
+    const skeleton  = generateSkeleton(program, analysis, paragraphChunks, cache, settings, wsConstants)
+    const allHoles  = extractHoles(skeleton)
+
+    // Fill sequentially so each hole's surrounding-code context includes
+    // the already-filled output of previous holes (critical for dependent sections)
+    let currentSkeleton = skeleton
+    for (const { id: holeId } of allHoles) {
+      const freshHoles = extractHoles(currentSkeleton)
+      const hole       = freshHoles.find(h => h.id === holeId)
+      if (!hole) continue
+      const ctx    = holeToContext(hole, paragraphChunks, currentSkeleton, settings, tableSchemas, wsConstants)
+      const result = await provider.fillHole(ctx)
+      const filled = result.code ?? '  // hole fill failed'
+      currentSkeleton = assembleSkeleton(currentSkeleton, [{ id: holeId, code: filled }])
+    }
+    code                 = currentSkeleton
+    notes                = [`Mechanical skeleton: ${allHoles.length} hole(s) filled by AI`]
     paragraphsIncluded   = paragraphChunks.map(c => c.chunk_name)
-    contextTokenEstimate = holes.reduce((sum, h) => sum + Math.ceil(holeToContext(h, paragraphChunks, skeleton, settings, tableSchemas).cobolText.length / 4), 0)
-    verificationReport   = buildVerificationReport(program, analysis, cache, skeleton, holes)
+    contextTokenEstimate = allHoles.reduce((sum, h) => sum + Math.ceil(holeToContext(h, paragraphChunks, skeleton, settings, tableSchemas, wsConstants).cobolText.length / 4), 0)
+    verificationReport   = buildVerificationReport(program, analysis, cache, skeleton, allHoles)
   } else {
     // ── Fallback: full-context path ─────────────────────────────────────────
     const allParagraphNames = [...new Set(entryPoints.flatMap(ep => ep.paragraphNames ?? []))]
