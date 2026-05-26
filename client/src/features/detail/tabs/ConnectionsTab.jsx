@@ -1,21 +1,17 @@
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 
-function ProgramLink({ name, id, status, onClick }) {
-  const clickable = !!id && status !== 'pending'
+function ProgramLink({ name, id, status }) {
   return (
-    <div
-      className={`flex items-center justify-between bg-muted/30 rounded-md px-3 py-2 ${clickable ? 'cursor-pointer hover:bg-muted/60 transition-colors' : ''}`}
-      onClick={() => clickable && onClick?.(id)}
-    >
-      <span className={`font-mono text-sm ${clickable ? 'text-blue-400' : 'text-muted-foreground'}`}>{name}</span>
+    <div className="flex items-center justify-between bg-muted/30 rounded-md px-3 py-2">
+      <span className={`font-mono text-sm ${id && status !== 'pending' ? 'text-blue-400' : 'text-muted-foreground'}`}>{name}</span>
       {!id && <Badge variant="outline" className="text-xs">not uploaded</Badge>}
       {id && status === 'pending' && <Badge variant="outline" className="text-xs">not analyzed</Badge>}
     </div>
   )
 }
 
-export default function ConnectionsTab({ edges, programId, analysis, onNavigate }) {
+export default function ConnectionsTab({ edges, programId, analysis }) {
   const incoming = edges.filter(e => e.to_program_id === programId)
   const outgoing  = edges.filter(e => e.from_program_id === programId)
   const deps = analysis?.external_dependencies ?? []
@@ -29,7 +25,7 @@ export default function ConnectionsTab({ edges, programId, analysis, onNavigate 
         {incoming.length === 0
           ? <p className="text-sm text-muted-foreground">None</p>
           : incoming.map((e, i) => (
-              <ProgramLink key={i} name={e.from_program_name} id={e.from_program_id} status={e.from_program_status} onClick={onNavigate} />
+              <ProgramLink key={i} name={e.from_program_name} id={e.from_program_id} status={e.from_program_status}  />
             ))
         }
       </section>
@@ -43,7 +39,7 @@ export default function ConnectionsTab({ edges, programId, analysis, onNavigate 
         {outgoing.length === 0
           ? <p className="text-sm text-muted-foreground">None</p>
           : outgoing.map((e, i) => (
-              <ProgramLink key={i} name={e.to_program_name} id={e.to_program_id} status={e.to_program_status} onClick={onNavigate} />
+              <ProgramLink key={i} name={e.to_program_name} id={e.to_program_id} status={e.to_program_status}  />
             ))
         }
       </section>

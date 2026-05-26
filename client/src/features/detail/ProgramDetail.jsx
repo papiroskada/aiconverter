@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Trash2, Download, MoreHorizontal, Loader2, X } from 'lucide-react'
+import { RotateCcw, Trash2, Download, MoreHorizontal, Loader2 } from 'lucide-react'
 import { fetchProgram, deleteProgram, triggerReanalyze } from '@/api/programs.js'
 import { useSSE } from '@/hooks/useSSE.js'
 import { useAuth } from '@/auth/AuthContext.jsx'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AnalysisPipeline } from '@/components/AnalysisPipeline.jsx'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import OverviewTab from './tabs/OverviewTab.jsx'
@@ -39,7 +39,9 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
   const [loading, setLoading] = useState(true)
   const [reanalyzing, setReanalyzing] = useState(false)
   const [sseActive, setSseActive] = useState(false)
-  const [localStep, setLocalStep] = useState(null)
+  const [localStage, setLocalStage] = useState(null)
+  const [localAiStep, setLocalAiStep] = useState(null)
+  const [localMessage, setLocalMessage] = useState(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const doneRef = useRef(false)
@@ -52,25 +54,50 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
     setLoading(true)
     setProgram(null)
     doneRef.current = false
+    setLocalStage(null)
+    setLocalAiStep(null)
+    setLocalMessage(null)
     fetchProgram(programId).then(p => {
       setProgram(p)
       setUserFlags(p?.userFlags ?? {})
+      if (p?.status === 'analyzing') {
+        setLocalStage('parsing')
+        setSseActive(true)
+      }
     }).finally(() => setLoading(false))
   }, [programId])
 
   useSSE(sseActive ? programId : null, (event, data) => {
-    if (event === 'progress' && data.stage === 'step') setLocalStep({ step: data.step, total: data.total })
-    if (event === 'done' || event === 'failed') {
+    if (event === 'progress') {
+      if (data.stage === 'parsing') {
+        setLocalStage('structural')
+        setLocalMessage(null)
+      } else if (data.stage === 'step') {
+        setLocalStage('ai')
+        setLocalAiStep({ step: data.step, total: data.total })
+      }
+      if (data.message) setLocalMessage(data.message)
+    }
+    if (event === 'done' || event === 'failed' || event === 'cancelled') {
       if (doneRef.current) return
       doneRef.current = true
-      setSseActive(false); setLocalStep(null); setReanalyzing(false)
+      setSseActive(false)
+      setLocalStage(null)
+      setLocalAiStep(null)
+      setLocalMessage(null)
+      setReanalyzing(false)
       fetchProgram(programId).then(p => { setProgram(p); setUserFlags(p?.userFlags ?? {}) })
       onReanalyzedRef.current?.()
     }
   })
 
   async function handleReanalyze() {
-    doneRef.current = false; setReanalyzing(true); setSseActive(true)
+    doneRef.current = false
+    setReanalyzing(true)
+    setSseActive(true)
+    setLocalStage('parsing')
+    setLocalAiStep(null)
+    setLocalMessage(null)
     await triggerReanalyze(programId)
   }
 
@@ -80,8 +107,11 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
     finally { setDeleting(false) }
   }
 
-  const sp = localStep ?? stepProgress.get(programId)
   const isAnalyzing = program?.status === 'analyzing' || reanalyzing
+  const sp = stepProgress.get(programId)
+  const effectiveStage = localStage ?? sp?.stage ?? (isAnalyzing ? 'parsing' : null)
+  const effectiveAiStep = localAiStep ?? (sp?.step != null ? { step: sp.step, total: sp.total } : null)
+  const effectiveMessage = localMessage ?? sp?.message ?? null
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
   if (!program) return null
@@ -121,17 +151,15 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
                   </DropdownMenuItem></>}
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}><X className="h-4 w-4" /></Button>
           </div>
         </div>
-        {isAnalyzing && sp && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Analyzing… step {sp.step} of {sp.total}</span>
-              <span>{Math.round(sp.step / sp.total * 100)}%</span>
-            </div>
-            <Progress value={Math.round(sp.step / sp.total * 100)} className="h-1.5" />
-          </div>
+        {isAnalyzing && (
+          <AnalysisPipeline
+            activeStage={effectiveStage}
+            aiStep={effectiveAiStep}
+            message={effectiveMessage}
+            failed={false}
+          />
         )}
       </div>
 

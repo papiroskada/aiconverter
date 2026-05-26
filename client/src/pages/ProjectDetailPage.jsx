@@ -19,6 +19,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import UploadDialog from '@/features/programs/UploadDialog.jsx'
 import ProgramDetail from '@/features/detail/ProgramDetail.jsx'
+import { MiniPipeline } from '@/components/AnalysisPipeline.jsx'
 
 const STATUS_CONFIG = {
   analyzed:  { label: 'Analyzed',  dot: 'bg-green-500',              badge: 'default' },
@@ -108,21 +109,34 @@ export default function ProjectDetailPage() {
 
   useAppSSE(analyzing ? appId : null, (event, data) => {
     if (event === 'progress' && data.programId) {
+      if (data.stage === 'parsing') {
+        setStepProgress(prev => {
+          const m = new Map(prev)
+          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'structural', message: data.message ?? null })
+          return m
+        })
+      }
+      if (data.stage === 'analysis') {
+        setStepProgress(prev => {
+          const m = new Map(prev)
+          m.set(data.programId, { ...(m.get(data.programId) ?? {}), message: data.message ?? null })
+          return m
+        })
+      }
       if (data.stage === 'step') {
         setStepProgress(prev => {
           const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), step: data.step, total: data.total })
+          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'ai', step: data.step, total: data.total })
           return m
         })
       }
-      if (data.stage === 'analysis' || data.stage === 'parsing') {
-        setStepProgress(prev => {
-          const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), message: data.message })
-          return m
-        })
+      if (data.stage === 'done') {
+        setPrograms(prev => prev.map(p => p.id === data.programId ? { ...p, status: 'analyzed' } : p))
+        setBatchProgress(prev => prev ? { ...prev, done: prev.done + 1 } : null)
+        setStepProgress(prev => { const m = new Map(prev); m.delete(data.programId); return m })
       }
-      if (data.stage === 'done' || data.stage === 'failed') {
+      if (data.stage === 'failed') {
+        setPrograms(prev => prev.map(p => p.id === data.programId ? { ...p, status: 'failed' } : p))
         setBatchProgress(prev => prev ? { ...prev, done: prev.done + 1 } : null)
         setStepProgress(prev => { const m = new Map(prev); m.delete(data.programId); return m })
       }
@@ -137,6 +151,14 @@ export default function ProjectDetailPage() {
       load()
     }
   })
+
+  // Poll for status updates when programs uploaded individually (no app-level SSE in that flow)
+  useEffect(() => {
+    if (analyzing) return
+    if (!programs.some(p => p.status === 'analyzing')) return
+    const timer = setTimeout(load, 4000)
+    return () => clearTimeout(timer)
+  }, [programs, analyzing, load])
 
   async function handleAnalyzeAll(mode) {
     const pending = programs.filter(p => p.status !== 'analyzed').length
@@ -338,16 +360,16 @@ export default function ProjectDetailPage() {
                 >
                   <TableCell className="font-mono font-medium">{program.name}</TableCell>
                   <TableCell>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <StatusBadge status={program.status} />
+                      {program.status === 'analyzing' && (
+                        <MiniPipeline
+                          activeStage={sp?.stage ?? 'parsing'}
+                          failed={false}
+                        />
+                      )}
                       {sp?.message && (
                         <p className="text-xs text-muted-foreground max-w-[220px] truncate">{sp.message}</p>
-                      )}
-                      {sp?.step != null && (
-                        <div className="flex items-center gap-2">
-                          <Progress value={Math.round(sp.step / sp.total * 100)} className="h-1 w-20" />
-                          <span className="text-xs text-muted-foreground">{sp.step}/{sp.total}</span>
-                        </div>
                       )}
                       {program.status === 'failed' && errMsg && (
                         <p className="text-xs text-destructive max-w-[220px] truncate" title={errMsg}>{errMsg}</p>
@@ -396,7 +418,7 @@ export default function ProjectDetailPage() {
 
       {/* Program detail sheet */}
       <Sheet open={!!selectedProgramId} onOpenChange={open => { if (!open) setSelectedProgramId(null) }}>
-        <SheetContent className="w-full sm:max-w-2xl p-0 overflow-hidden" side="right">
+        <SheetContent className="w-full sm:max-w-2xl p-0 overflow-hidden" side="right" showCloseButton={false}>
           {selectedProgramId && (
             <ProgramDetail
               programId={selectedProgramId}

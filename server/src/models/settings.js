@@ -27,11 +27,11 @@ export async function getSettings() {
 
   const result = { ...DEFAULTS, ...row }
 
-  // Decrypt encrypted fields; fall back to env var if DB is empty
-  result.claude_api_key = process.env.CLAUDE_API_KEY
-    ?? (row.claude_api_key_enc ? decrypt(row.claude_api_key_enc) : row.claude_api_key ?? null)
-  result.openai_api_key = process.env.OPENAI_API_KEY
-    ?? (row.openai_api_key_enc ? decrypt(row.openai_api_key_enc) : row.openai_api_key ?? null)
+  // DB value takes priority; env var is fallback if DB has nothing
+  result.claude_api_key = (row.claude_api_key_enc ? decrypt(row.claude_api_key_enc) : row.claude_api_key ?? null)
+    ?? process.env.CLAUDE_API_KEY ?? null
+  result.openai_api_key = (row.openai_api_key_enc ? decrypt(row.openai_api_key_enc) : row.openai_api_key ?? null)
+    ?? process.env.OPENAI_API_KEY ?? null
 
   return result
 }

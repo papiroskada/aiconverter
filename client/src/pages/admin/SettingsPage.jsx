@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { apiFetch, apiJson } from '@/api/client.js'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,23 +20,29 @@ const CLAUDE_RULES_MODELS     = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6
 
 function MaskedInput({ id, value, onChange, placeholder }) {
   const [show, setShow] = useState(false)
+  // Server returns masked keys with •  — show as plain text so user sees "sk-ant-••••1234"
+  // When the user types a new key (no •) keep it hidden behind password dots
+  const isServerMasked = value?.includes('•')
+  const inputType = isServerMasked || show ? 'text' : 'password'
   return (
     <div className="relative">
       <Input
         id={id}
-        type={show ? 'text' : 'password'}
+        type={inputType}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         className="pr-10 font-mono text-sm"
       />
-      <button
-        type="button"
-        onClick={() => setShow(s => !s)}
-        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-      >
-        {show ? <EyeOff size={15} /> : <Eye size={15} />}
-      </button>
+      {!isServerMasked && (
+        <button
+          type="button"
+          onClick={() => setShow(s => !s)}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        >
+          {show ? <EyeOff size={15} /> : <Eye size={15} />}
+        </button>
+      )}
     </div>
   )
 }
@@ -44,11 +51,17 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    apiFetch('/api/settings').then(r => r.json()).then(setSettings).finally(() => setLoading(false))
+    apiFetch('/api/settings')
+      .then(r => {
+        if (!r.ok) throw new Error(`Failed to load settings (${r.status})`)
+        return r.json()
+      })
+      .then(setSettings)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
   }, [])
 
   const set = key => val => setSettings(s => ({ ...s, [key]: val }))
@@ -56,11 +69,19 @@ export default function SettingsPage() {
 
   async function handleSave(e) {
     e.preventDefault()
-    setSaving(true); setError(''); setSaved(false)
+    setSaving(true); setError('')
     try {
-      await apiJson('/api/settings', { method: 'PUT', body: JSON.stringify(settings) })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
+      // Strip masked key values (contain •) — they haven't changed, sending them would corrupt the real key
+      const payload = { ...settings }
+      if (payload.claude_api_key?.includes('•')) delete payload.claude_api_key
+      if (payload.openai_api_key?.includes('•')) delete payload.openai_api_key
+
+      const res = await apiJson('/api/settings', { method: 'PUT', body: JSON.stringify(payload) })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body?.error || `Server error ${res.status}`)
+      }
+      toast.success('Settings saved')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -84,7 +105,6 @@ export default function SettingsPage() {
       </div>
 
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      {saved && <Alert><AlertDescription>Settings saved.</AlertDescription></Alert>}
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Provider selector */}
