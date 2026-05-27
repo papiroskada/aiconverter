@@ -11,6 +11,7 @@ import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
 import { upsertCall } from '../models/programCalls.js'
+import { recordUsage } from '../models/tokenUsage.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UPLOADS_DIR = join(__dirname, '../../../uploads')
@@ -28,10 +29,16 @@ function makeEmit(programId, sseEmitters) {
 }
 
 // Core analysis logic — awaitable, accepts a pre-built emit function and settings config
-async function runAnalysisCore(programId, programName, cobolText, savedChunks, emit, settings) {
+async function runAnalysisCore(programId, programName, cobolText, savedChunks, emit, settings, userId = null) {
   const controller = new AbortController()
   activeControllers.set(programId, controller)
   const provider = await getProvider(settings)
+
+  if (userId) {
+    provider.setUsageCallback(({ action, model, tokensIn, tokensOut }) => {
+      recordUsage(userId, programId, action, model, tokensIn, tokensOut).catch(() => {})
+    })
+  }
 
   const aiProvider = settings.ai_provider ?? 'openai'
   const aiModel = aiProvider === 'openai'
@@ -97,7 +104,7 @@ export function cancelProgram(programId) {
 
 // Single-file upload: saves file, parses, and fire-and-forgets analysis (no applicationId)
 // Batch upload: saves file and parses only — batchService handles analysis (with applicationId)
-export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = null) {
+export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = null, userId = null) {
   mkdirSync(UPLOADS_DIR, { recursive: true })
 
   const sourceText = file.buffer.toString('utf8')
@@ -142,13 +149,13 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
 
   // Always start analysis immediately after upload (fire-and-forget)
   const settings = await getSettings()
-  runAnalysisCore(program.id, programName, cobolText, savedChunks, emit, settings)
+  runAnalysisCore(program.id, programName, cobolText, savedChunks, emit, settings, userId)
 
   return program
 }
 
 // Called by batchService: reads saved file, runs analysis, emits on both program and app SSE
-export async function runProgramFromFile(programId, programSseEmitters, settings, appSseEmitters = null) {
+export async function runProgramFromFile(programId, programSseEmitters, settings, appSseEmitters = null, userId = null) {
   const program = await findProgramById(programId)
   if (!program || !program.file_path) return
 
@@ -167,10 +174,10 @@ export async function runProgramFromFile(programId, programSseEmitters, settings
     }
   }
 
-  await runAnalysisCore(programId, program.name, cobolText, savedChunks, emit, settings)
+  await runAnalysisCore(programId, program.name, cobolText, savedChunks, emit, settings, userId)
 }
 
-export async function reanalyze(programId, sseEmitters) {
+export async function reanalyze(programId, sseEmitters, userId = null) {
   const program = await findProgramById(programId)
   if (!program) throw Object.assign(new Error('Not found'), { status: 404 })
   if (program.status === 'analyzing') throw Object.assign(new Error('Already analyzing'), { status: 409 })
@@ -183,7 +190,7 @@ export async function reanalyze(programId, sseEmitters) {
   const settings = await getSettings()
   const emit = makeEmit(programId, sseEmitters)
 
-  runAnalysisCore(programId, program.name, cobolText, existingChunks, emit, settings)
+  runAnalysisCore(programId, program.name, cobolText, existingChunks, emit, settings, userId)
 }
 
 export async function deleteProgram(programId, sseEmitters) {

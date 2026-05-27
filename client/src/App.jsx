@@ -9,6 +9,7 @@ import ProjectDetailPage from '@/pages/ProjectDetailPage.jsx'
 import GraphPage from '@/pages/GraphPage.jsx'
 import UsersPage from '@/pages/admin/UsersPage.jsx'
 import SettingsPage from '@/pages/admin/SettingsPage.jsx'
+import ProfilePage from '@/pages/ProfilePage.jsx'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:appId" element={<ProjectDetailPage />} />
               <Route path="/graph" element={<GraphPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
             </Route>
           </Route>
 

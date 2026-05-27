@@ -11,28 +11,29 @@ export class ClaudeProvider extends BaseProvider {
     this.modelDetail = config.claude_model_rules     || process.env.CLAUDE_MODEL_RULES     || 'claude-haiku-4-5-20251001'
   }
 
-  async #callClaude(prompt, maxTokens, model, signal, temperature) {
+  async #callClaude(action, prompt, maxTokens, model, signal, temperature) {
     const params = { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
     if (temperature !== undefined) params.temperature = temperature
     const message = await this.client.messages.create(params, { signal })
+    this._recordUsage(action, model, message.usage?.input_tokens ?? 0, message.usage?.output_tokens ?? 0)
     const text = message.content[0].text.trim()
     const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     return JSON.parse(cleaned)
   }
 
   async extractBusinessAnalysis(context, signal) {
-    return this.#callClaude(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
+    return this.#callClaude('analysis', BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
   }
 
   async analyzeEntryPoint(condition, businessName, context, signal) {
-    return this.#callClaude(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
+    return this.#callClaude('analysis', ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
   }
 
   async generateProgram(context, patterns, signal) {
-    return this.#callClaude(PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
+    return this.#callClaude('generation', PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
   }
 
   async fillHole(holeContext, signal) {
-    return this.#callClaude(HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
+    return this.#callClaude('generation', HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
   }
 }

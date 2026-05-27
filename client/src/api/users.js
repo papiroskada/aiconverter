@@ -25,3 +25,9 @@ export async function updateUser(id, data) {
   }
   return res.json()
 }
+
+export async function fetchTokenStats() {
+  const res = await apiFetch(`${BASE}/token-stats`)
+  if (!res.ok) throw new Error('Failed to fetch token stats')
+  return res.json()
+}

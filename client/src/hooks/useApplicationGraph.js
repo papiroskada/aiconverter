@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { applyNodeChanges } from 'reactflow'
 import { graphlib, layout as dagreLayout } from '@dagrejs/dagre'
-import { fetchGraph } from '../api/programs.js'
+import { fetchApplicationGraph } from '../api/applications.js'
 
 const NODE_WIDTH = 160
 const NODE_HEIGHT = 40
@@ -13,19 +13,14 @@ function applyDagreLayout(nodes, edges) {
 
   nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }))
   edges.forEach(e => {
-    if (g.hasNode(e.source) && g.hasNode(e.target)) {
-      g.setEdge(e.source, e.target)
-    }
+    if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target)
   })
 
   dagreLayout(g)
 
   return nodes.map(n => {
     const pos = g.node(n.id)
-    return {
-      ...n,
-      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
-    }
+    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } }
   })
 }
 
@@ -69,45 +64,34 @@ function buildEdges(rawEdges, programs) {
     })
 }
 
-export function usePrograms() {
+export function useApplicationGraph(applicationId) {
   const [nodes, setNodes] = useState([])
   const [edges, setEdges] = useState([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    const { programs, edges: rawEdges } = await fetchGraph()
-    const newNodes = buildNodes(programs)
-    const newEdges = buildEdges(rawEdges, programs)
-    const layoutedNodes = applyDagreLayout(newNodes, newEdges)
-
-    setNodes(prev => {
-      const posMap = new Map(prev.map(n => [n.id, n.position]))
-      return layoutedNodes.map(n => ({
-        ...n,
-        position: posMap.get(n.id) || n.position,
-      }))
-    })
-    setEdges(newEdges)
-    setLoading(false)
-  }, [])
+    if (!applicationId) return
+    setLoading(true)
+    try {
+      const { programs, edges: rawEdges } = await fetchApplicationGraph(applicationId)
+      const newNodes = buildNodes(programs)
+      const newEdges = buildEdges(rawEdges, programs)
+      const layoutedNodes = applyDagreLayout(newNodes, newEdges)
+      setNodes(prev => {
+        const posMap = new Map(prev.map(n => [n.id, n.position]))
+        return layoutedNodes.map(n => ({ ...n, position: posMap.get(n.id) || n.position }))
+      })
+      setEdges(newEdges)
+    } finally {
+      setLoading(false)
+    }
+  }, [applicationId])
 
   useEffect(() => { refresh() }, [refresh])
-
-  const markAnalyzing = useCallback((programId) => {
-    setNodes(prev => prev.map(n =>
-      n.id === programId ? { ...n, data: { ...n.data, status: 'analyzing' } } : n
-    ))
-  }, [])
-
-  const markAnalyzed = useCallback((programId) => {
-    setNodes(prev => prev.map(n =>
-      n.id === programId ? { ...n, data: { ...n.data, status: 'analyzed' } } : n
-    ))
-  }, [])
 
   const onNodesChange = useCallback((changes) => {
     setNodes(prev => applyNodeChanges(changes, prev))
   }, [])
 
-  return { nodes, edges, loading, refresh, markAnalyzing, markAnalyzed, onNodesChange }
+  return { nodes, edges, loading, refresh, onNodesChange }
 }

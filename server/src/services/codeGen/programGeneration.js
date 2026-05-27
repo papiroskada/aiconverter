@@ -1,4 +1,5 @@
 import { findProgramById } from '../../models/programs.js'
+import { recordUsage } from '../../models/tokenUsage.js'
 
 function wrapWithTodo(code, hole) {
   const stepLines = hole.steps?.length
@@ -33,7 +34,7 @@ export async function generateEntryPointTests(programId, condition) {
   }
 }
 
-export async function generateProgram(programId, { includeTests = false } = {}) {
+export async function generateProgram(programId, { includeTests = false } = {}, userId = null) {
   const settings = await getSettings()
   const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
     await loadProgramData(programId)
@@ -43,6 +44,12 @@ export async function generateProgram(programId, { includeTests = false } = {}) 
 
   const patterns  = getPatterns(settings)
   const provider  = await getProvider(settings)
+
+  if (userId) {
+    provider.setUsageCallback(({ action, model, tokensIn, tokensOut }) => {
+      recordUsage(userId, programId, action, model, tokensIn, tokensOut).catch(() => {})
+    })
+  }
   const cache     = program.structural_cache
   const hasIR     = Array.isArray(cache?.linkageVars) && cache.linkageVars.length > 0
 

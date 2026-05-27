@@ -16,9 +16,19 @@ export default function GraphPage() {
     return [...seen.entries()].map(([id, name]) => ({ id, name }))
   }, [nodes])
 
-  const displayNodes = appFilter === 'all'
-    ? nodes
-    : nodes.filter(n => n.data.applicationId === appFilter || n.data.isPhantom)
+  const displayNodes = useMemo(() => {
+    if (appFilter === 'all') return nodes
+    const appNodeIds = new Set(
+      nodes.filter(n => n.data.applicationId === appFilter).map(n => n.id)
+    )
+    const reachableIds = new Set(
+      edges.filter(e => appNodeIds.has(e.source)).map(e => e.target)
+    )
+    return nodes.filter(n =>
+      n.data.applicationId === appFilter ||
+      (n.data.isPhantom && reachableIds.has(n.id))
+    )
+  }, [nodes, edges, appFilter])
 
   const displayEdges = useMemo(() => {
     const ids = new Set(displayNodes.map(n => n.id))

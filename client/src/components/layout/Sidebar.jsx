@@ -82,8 +82,20 @@ export default function Sidebar() {
         </Tooltip>
 
         <Tooltip>
-          <TooltipTrigger render={<Avatar className="w-8 h-8 cursor-default" />}>
-            <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+          <TooltipTrigger
+            render={
+              <NavLink
+                to="/profile"
+                className={({ isActive }) =>
+                  `flex items-center justify-center w-10 h-10 rounded-lg transition-colors
+                   ${isActive ? 'ring-2 ring-primary' : 'hover:bg-accent'}`
+                }
+              />
+            }
+          >
+            <Avatar className="w-8 h-8">
+              <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+            </Avatar>
           </TooltipTrigger>
           <TooltipContent side="right">
             <div className="text-xs">

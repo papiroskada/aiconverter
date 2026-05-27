@@ -7,7 +7,8 @@ import {
   getApplicationPrograms,
   deleteApplicationById,
 } from '../models/applications.js'
-import { getProgramsByApplicationId, deleteProgramsByApplicationId } from '../models/programs.js'
+import { getProgramsByApplicationId, deleteProgramsByApplicationId, getProgramsByAppForGraph } from '../models/programs.js'
+import { getEdgesForApplication } from '../models/programEdges.js'
 import { startBatchAnalysis, cancelBatch } from '../services/batchService.js'
 import { cancelProgram } from '../services/analysisService.js'
 import { requireRole } from '../middleware/auth.js'
@@ -49,6 +50,18 @@ router.get('/:id', async (req, res, next) => {
   }
 })
 
+router.get('/:id/graph', async (req, res, next) => {
+  try {
+    const [programs, edges] = await Promise.all([
+      getProgramsByAppForGraph(req.params.id),
+      getEdgesForApplication(req.params.id),
+    ])
+    res.json({ programs, edges })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.get('/:id/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -73,7 +86,7 @@ router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res, 
     const application = await findApplicationById(req.params.id)
     if (!application) return res.status(404).json({ error: 'Not found' })
     const mode = req.body.mode === 'parallel' ? 'parallel' : 'sequential'
-    startBatchAnalysis(req.params.id, mode, appSseEmitters)
+    startBatchAnalysis(req.params.id, mode, appSseEmitters, req.user?.sub)
     res.status(202).json({ status: 'analyzing', mode })
   } catch (err) {
     next(err)

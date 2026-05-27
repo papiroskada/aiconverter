@@ -1,4 +1,12 @@
 export class BaseProvider {
+  constructor() { this._onUsage = null }
+
+  setUsageCallback(fn) { this._onUsage = fn }
+
+  _recordUsage(action, model, tokensIn, tokensOut) {
+    this._onUsage?.({ action, model, tokensIn, tokensOut })
+  }
+
   async extractBusinessAnalysis(context, signal) { throw new Error('Not implemented') }
   async analyzeEntryPoint(condition, businessName, context, signal) { throw new Error('Not implemented') }
   async generateProgram(context, patterns, signal) { throw new Error('Not implemented') }
@@ -6,7 +14,6 @@ export class BaseProvider {
 }
 
 export async function getProvider(config = {}) {
-  // Explicit AI_PROVIDER in .env overrides DB (Settings UI persists ai_provider to DB).
   const provider =
     process.env.AI_PROVIDER?.trim() || config.ai_provider || 'claude'
   if (provider === 'openai') {

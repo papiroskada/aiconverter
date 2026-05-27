@@ -31,7 +31,7 @@ export function cancelBatch(applicationId) {
   for (const id of ids) cancelProgram(id)
 }
 
-export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
+export async function startBatchAnalysis(applicationId, mode, appSseEmitters, userId = null) {
   const [programs, settings] = await Promise.all([
     getApplicationPrograms(applicationId),
     getSettings(),
@@ -59,14 +59,14 @@ export async function startBatchAnalysis(applicationId, mode, appSseEmitters) {
       const tasks = pending.map(p => () => {
         if (cancelledBatches.has(applicationId)) return Promise.resolve()
         logger.start(p.name, `Batch [${mode}]: starting program`)
-        return runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters)
+        return runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters, userId)
       })
       await runWithConcurrencyLimit(tasks, CONCURRENCY_LIMIT)
     } else {
       for (const p of pending) {
         if (cancelledBatches.has(applicationId)) break
         logger.start(p.name, `Batch [${mode}]: starting program`)
-        await runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters)
+        await runProgramFromFile(p.id, sseEmitters, settings, appSseEmitters, userId)
       }
     }
 

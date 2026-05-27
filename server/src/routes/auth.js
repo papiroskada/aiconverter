@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import bcrypt from 'bcrypt'
 import { z } from 'zod'
-import { findUserByEmail, findUserById } from '../models/users.js'
+import { findUserByEmail, findUserById, updateUser } from '../models/users.js'
 import { saveRefreshToken, findRefreshToken, revokeRefreshToken, generateRefreshToken } from '../models/refreshTokens.js'
 import { logAudit } from '../models/auditLog.js'
 import { signAccessToken, requireAuth } from '../middleware/auth.js'
@@ -85,6 +85,31 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const user = await findUserById(req.user.sub)
     if (!user) return res.status(404).json({ error: 'User not found' })
     res.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+  } catch (err) { next(err) }
+})
+
+// PATCH /api/auth/me — update own name
+router.patch('/me', requireAuth, validate(z.object({ name: z.string().min(1) })), async (req, res, next) => {
+  try {
+    const user = await updateUser(req.user.sub, { name: req.body.name })
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    res.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+  } catch (err) { next(err) }
+})
+
+// POST /api/auth/me/password — change own password
+router.post('/me/password', requireAuth, validate(z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+})), async (req, res, next) => {
+  try {
+    const user = await findUserById(req.user.sub)
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    const ok = await bcrypt.compare(req.body.currentPassword, user.password_hash)
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' })
+    const password_hash = await bcrypt.hash(req.body.newPassword, 12)
+    await updateUser(req.user.sub, { password_hash })
+    res.status(204).send()
   } catch (err) { next(err) }
 })
 

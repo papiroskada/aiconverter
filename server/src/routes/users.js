@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { getAllUsers, createUser, updateUser } from '../models/users.js'
 import { requireRole } from '../middleware/auth.js'
 import { validate } from '../middleware/validate.js'
+import { getUsageStats } from '../models/tokenUsage.js'
 
 const router = Router()
 
@@ -48,6 +49,12 @@ router.patch('/:id', validate(updateSchema), async (req, res, next) => {
     if (!user) return res.status(404).json({ error: 'User not found' })
     res.json(user)
   } catch (err) { next(err) }
+})
+
+// GET /api/users/token-stats
+router.get('/token-stats', async (req, res, next) => {
+  try { res.json(await getUsageStats()) }
+  catch (err) { next(err) }
 })
 
 export default router

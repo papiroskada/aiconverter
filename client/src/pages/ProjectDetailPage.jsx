@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Play, Zap, Trash2, RotateCcw, Upload, MoreHorizontal,
-  ChevronLeft, Loader2, X, Download
+  ChevronLeft, Loader2, X, Download, GitFork
 } from 'lucide-react'
 import { fetchApplication, startApplicationAnalysis, cancelApplication, deleteApplication } from '@/api/applications.js'
 import { deleteProgram, triggerReanalyze, generateProjectFiles } from '@/api/programs.js'
@@ -21,6 +21,8 @@ import UploadDialog from '@/features/programs/UploadDialog.jsx'
 import ProgramDetail from '@/features/detail/ProgramDetail.jsx'
 import { MiniPipeline } from '@/components/AnalysisPipeline.jsx'
 import AppCodeTab from '@/features/code/AppCodeTab.jsx'
+import ProgramGraph from '@/components/Graph/ProgramGraph.jsx'
+import { useApplicationGraph } from '@/hooks/useApplicationGraph.js'
 
 const STATUS_CONFIG = {
   analyzed:  { label: 'Analyzed',  dot: 'bg-green-500',              badge: 'default' },
@@ -93,6 +95,7 @@ export default function ProjectDetailPage() {
   const [programErrors, setProgramErrors] = useState(new Map())
   const [zipping, setZipping] = useState(false)
   const [view, setView] = useState('programs')
+  const { nodes: graphNodes, edges: graphEdges, loading: graphLoading, onNodesChange: onGraphNodesChange } = useApplicationGraph(view === 'graph' ? appId : null)
 
   const load = useCallback(async () => {
     try {
@@ -310,17 +313,18 @@ export default function ProjectDetailPage() {
       {/* View tabs */}
       <div className="border-b border-border shrink-0 overflow-x-auto">
         <div className="flex items-center gap-0 px-6 min-w-fit">
-        {['programs', 'code'].map(v => (
+        {['programs', 'code', 'graph'].map(v => (
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`capitalize text-sm px-4 py-2.5 border-b-2 transition-colors ${
+            className={`capitalize text-sm px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 ${
               view === v
                 ? 'border-primary text-foreground font-medium'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
-            {v === 'programs' ? 'Programs' : 'Code'}
+            {v === 'graph' && <GitFork size={13} />}
+            {v === 'programs' ? 'Programs' : v === 'code' ? 'Code' : 'Graph'}
           </button>
         ))}
         </div>
@@ -354,6 +358,16 @@ export default function ProjectDetailPage() {
       {view === 'code' && (
         <div className="flex-1 overflow-hidden">
           <AppCodeTab programs={programs} applicationId={appId} canEdit={canEdit} />
+        </div>
+      )}
+
+      {/* Graph tab */}
+      {view === 'graph' && (
+        <div className="flex-1">
+          {graphLoading
+            ? <div className="flex items-center justify-center h-full text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin mr-2" />Loading graph…</div>
+            : <ProgramGraph nodes={graphNodes} edges={graphEdges} onNodesChange={onGraphNodesChange} focusNodeId={null} onNodeClick={node => setSelectedProgramId(node.id)} />
+          }
         </div>
       )}
 

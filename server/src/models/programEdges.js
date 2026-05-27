@@ -26,6 +26,17 @@ export async function getAllEdges() {
   return rows
 }
 
+export async function getEdgesForApplication(applicationId) {
+  const { rows } = await pool.query(
+    `SELECT pe.from_program_id AS "from", pe.to_program_id AS "to", pe.to_program_name AS to_name
+     FROM program_edges pe
+     JOIN programs fp ON fp.id = pe.from_program_id
+     WHERE fp.application_id = $1`,
+    [applicationId]
+  )
+  return rows
+}
+
 export async function getEdgesForProgram(program_id) {
   const { rows } = await pool.query(
     `SELECT pe.*,

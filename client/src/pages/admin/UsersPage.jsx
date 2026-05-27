@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Loader2, MoreHorizontal } from 'lucide-react'
-import { fetchUsers, createUser, updateUser } from '@/api/users.js'
+import { fetchUsers, createUser, updateUser, fetchTokenStats } from '@/api/users.js'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,66 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const ROLE_VARIANT = { admin: 'destructive', developer: 'default', viewer: 'secondary' }
+
+function TokenStatsTab() {
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchTokenStats().then(setStats).finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+  if (!stats) return null
+
+  const totalAll = stats.totalIn + stats.totalOut
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total tokens in', value: stats.totalIn.toLocaleString() },
+          { label: 'Total tokens out', value: stats.totalOut.toLocaleString() },
+          { label: 'Total tokens used', value: totalAll.toLocaleString() },
+        ].map(({ label, value }) => (
+          <div key={label} className="rounded-lg border border-border p-4">
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className="text-2xl font-mono font-semibold mt-1">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>User</TableHead>
+            <TableHead className="text-right">Tokens in</TableHead>
+            <TableHead className="text-right">Tokens out</TableHead>
+            <TableHead className="text-right">Total</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {stats.users.length === 0 && (
+            <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-12">No usage data yet.</TableCell></TableRow>
+          )}
+          {stats.users.map(u => (
+            <TableRow key={u.id}>
+              <TableCell>
+                <div>
+                  <p className="font-medium text-sm">{u.name}</p>
+                  <p className="text-xs text-muted-foreground">{u.email}</p>
+                </div>
+              </TableCell>
+              <TableCell className="text-right font-mono text-sm">{u.tokens_in.toLocaleString()}</TableCell>
+              <TableCell className="text-right font-mono text-sm">{u.tokens_out.toLocaleString()}</TableCell>
+              <TableCell className="text-right font-mono text-sm font-medium">{u.total.toLocaleString()}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
 
 function CreateUserDialog({ open, onOpenChange, onCreate }) {
   const [form, setForm] = useState({ email: '', name: '', role: 'developer', password: '' })
@@ -75,6 +135,7 @@ function CreateUserDialog({ open, onOpenChange, onCreate }) {
 }
 
 export default function UsersPage() {
+  const [view, setView] = useState('users')
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
@@ -115,68 +176,89 @@ export default function UsersPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage who has access to AI Converter.</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />Create User
-        </Button>
+        {view === 'users' && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />Create User
+          </Button>
+        )}
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="w-10" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {users.length === 0 && (
-            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-12">No users yet.</TableCell></TableRow>
-          )}
-          {users.map(user => (
-            <TableRow key={user.id} className={!user.is_active ? 'opacity-50' : ''}>
-              <TableCell className="font-medium">{user.name}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{user.email}</TableCell>
-              <TableCell>
-                <Badge variant={ROLE_VARIANT[user.role] ?? 'outline'} className="capitalize">{user.role}</Badge>
-              </TableCell>
-              <TableCell>
-                <Badge variant={user.is_active ? 'outline' : 'secondary'} className="text-xs">
-                  <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${user.is_active ? 'bg-green-500' : 'bg-slate-500'}`} />
-                  {user.is_active ? 'Active' : 'Inactive'}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => handleRoleChange(user, 'developer')} disabled={user.role === 'developer'}>
-                      Set Developer
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleRoleChange(user, 'viewer')} disabled={user.role === 'viewer'}>
-                      Set Viewer
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleRoleChange(user, 'admin')} disabled={user.role === 'admin'}>
-                      Set Admin
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => handleToggleActive(user)}>
-                      {user.is_active ? 'Deactivate' : 'Reactivate'}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <div className="flex gap-1 border-b border-border">
+        {['users', 'stats'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setView(tab)}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px
+              ${view === tab
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          >
+            {tab === 'users' ? 'Users' : 'Token Stats'}
+          </button>
+        ))}
+      </div>
 
-      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={handleCreate} />
+      {view === 'stats' ? <TokenStatsTab /> : (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.length === 0 && (
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-12">No users yet.</TableCell></TableRow>
+              )}
+              {users.map(user => (
+                <TableRow key={user.id} className={!user.is_active ? 'opacity-50' : ''}>
+                  <TableCell className="font-medium">{user.name}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{user.email}</TableCell>
+                  <TableCell>
+                    <Badge variant={ROLE_VARIANT[user.role] ?? 'outline'} className="capitalize">{user.role}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={user.is_active ? 'outline' : 'secondary'} className="text-xs">
+                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${user.is_active ? 'bg-green-500' : 'bg-slate-500'}`} />
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleRoleChange(user, 'developer')} disabled={user.role === 'developer'}>
+                          Set Developer
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleRoleChange(user, 'viewer')} disabled={user.role === 'viewer'}>
+                          Set Viewer
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleRoleChange(user, 'admin')} disabled={user.role === 'admin'}>
+                          Set Admin
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleToggleActive(user)}>
+                          {user.is_active ? 'Deactivate' : 'Reactivate'}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+
+          <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={handleCreate} />
+        </>
+      )}
     </div>
   )
 }

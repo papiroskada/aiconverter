@@ -27,3 +27,20 @@ export async function fetchMe() {
   if (!res.ok) return null
   return res.json()
 }
+
+export async function updateMe(data) {
+  const res = await apiJson('/api/auth/me', { method: 'PATCH', body: JSON.stringify(data) })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new Error(b.error || 'Update failed')
+  }
+  return res.json()
+}
+
+export async function changePassword(currentPassword, newPassword) {
+  const res = await apiJson('/api/auth/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new Error(b.error || 'Password change failed')
+  }
+}

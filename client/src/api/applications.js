@@ -14,6 +14,12 @@ export async function fetchApplication(id) {
   return res.json()
 }
 
+export async function fetchApplicationGraph(id) {
+  const res = await apiFetch(`${BASE}/${id}/graph`)
+  if (!res.ok) throw new Error('Failed to fetch graph')
+  return res.json()
+}
+
 export async function createApplication(name) {
   const res = await apiJson(BASE, {
     method: 'POST',

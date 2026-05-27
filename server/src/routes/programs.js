@@ -198,7 +198,7 @@ router.post('/upload', requireRole('developer', 'admin'), upload.single('file'),
     const applicationId = req.body.application_id || null
     const file = req.file
     if (!file) return res.status(400).json({ error: 'No file provided' })
-    const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId)
+    const program = await uploadAndStartAnalysis(file, sseEmitters, applicationId, req.user?.sub)
     await logAudit(req.user.sub, 'upload', 'program', program.id, req.ip)
     res.status(202).json({ id: program.id, status: program.status })
   } catch (err) {
@@ -209,7 +209,7 @@ router.post('/upload', requireRole('developer', 'admin'), upload.single('file'),
 // POST /api/programs/:id/analyze  (re-analyze)
 router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res) => {
   try {
-    await reanalyze(req.params.id, sseEmitters)
+    await reanalyze(req.params.id, sseEmitters, req.user?.sub)
     res.json({ status: 'analyzing' })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
@@ -228,7 +228,7 @@ router.get('/:id/generate-preview', requireRole('developer', 'admin'), async (re
 router.post('/:id/generate', requireRole('developer', 'admin'), async (req, res) => {
   try {
     const { includeTests = false } = req.body ?? {}
-    const result = await generateProgram(req.params.id, { includeTests })
+    const result = await generateProgram(req.params.id, { includeTests }, req.user?.sub)
     await logAudit(req.user.sub, 'generate', 'program', req.params.id, req.ip)
     res.json(result)
   } catch (err) {
@@ -270,7 +270,7 @@ router.get('/:id/verification-report', async (req, res, next) => {
 // POST /api/programs/:id/generate-program
 router.post('/:id/generate-program', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
-    const result = await generateProgram(req.params.id, { includeTests: req.body?.includeTests ?? false })
+    const result = await generateProgram(req.params.id, { includeTests: req.body?.includeTests ?? false }, req.user?.sub)
     saveGeneratedCode(req.params.id, {
       code: result.code,
       tests: result.tests ?? null,

@@ -11,26 +11,28 @@ export class OpenAIProvider extends BaseProvider {
     this.modelDetail = config.openai_model_rules     || process.env.OPENAI_MODEL_RULES     || 'gpt-4o-mini'
   }
 
-  async #callOpenAI(prompt, maxTokens, model, signal, temperature) {
+  async #callOpenAI(action, prompt, maxTokens, model, signal, temperature) {
     const params = { model, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] }
     if (temperature !== undefined) params.temperature = temperature
     const completion = await this.client.chat.completions.create(params, { signal })
+    const u = completion.usage
+    this._recordUsage(action, model, u?.prompt_tokens ?? 0, u?.completion_tokens ?? 0)
     return JSON.parse(completion.choices[0].message.content)
   }
 
   async extractBusinessAnalysis(context, signal) {
-    return this.#callOpenAI(BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
+    return this.#callOpenAI('analysis', BUSINESS_ANALYSIS_PROMPT(context), 8000, this.modelMain, signal)
   }
 
   async analyzeEntryPoint(condition, businessName, context, signal) {
-    return this.#callOpenAI(ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
+    return this.#callOpenAI('analysis', ANALYZE_ENTRY_POINT_PROMPT(condition, businessName, context), 4096, this.modelDetail, signal)
   }
 
   async generateProgram(context, patterns, signal) {
-    return this.#callOpenAI(PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
+    return this.#callOpenAI('generation', PROGRAM_GENERATION_PROMPT(context, patterns), 16000, this.modelMain, signal)
   }
 
   async fillHole(holeContext, signal) {
-    return this.#callOpenAI(HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
+    return this.#callOpenAI('generation', HOLE_FILL_PROMPT(holeContext), 4096, this.modelMain, signal, 0.2)
   }
 }

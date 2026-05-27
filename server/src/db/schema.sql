@@ -201,3 +201,15 @@ CREATE TABLE IF NOT EXISTS program_flags (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (program_id, user_id, condition)
 );
+
+-- Per-user AI token usage tracking
+CREATE TABLE IF NOT EXISTS token_usage (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+  program_id UUID REFERENCES programs(id) ON DELETE SET NULL,
+  action     TEXT NOT NULL,
+  model      TEXT NOT NULL,
+  tokens_in  INT NOT NULL DEFAULT 0,
+  tokens_out INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
