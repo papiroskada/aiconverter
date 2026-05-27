@@ -308,7 +308,8 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* View tabs */}
-      <div className="px-6 border-b border-border shrink-0 flex items-center gap-0">
+      <div className="border-b border-border shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-0 px-6 min-w-fit">
         {['programs', 'code'].map(v => (
           <button
             key={v}
@@ -322,6 +323,7 @@ export default function ProjectDetailPage() {
             {v === 'programs' ? 'Programs' : 'Code'}
           </button>
         ))}
+        </div>
       </div>
 
       {/* Search + filter (programs view only) */}

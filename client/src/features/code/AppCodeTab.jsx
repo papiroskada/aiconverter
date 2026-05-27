@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Download, Loader2, Play, RefreshCw } from 'lucide-react'
+import { Download, Loader2, RefreshCw, Zap, Eye } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { generateFullProgram, getGeneratedCode, generateProjectFiles } from '@/api/programs.js'
+import { generateFullProgram, getGeneratedCode, generateProjectFiles, previewProgramGeneration } from '@/api/programs.js'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
@@ -17,17 +17,20 @@ function downloadText(content, filename) {
 export default function AppCodeTab({ programs, applicationId, canEdit }) {
   const analyzed = programs.filter(p => p.status === 'analyzed')
 
-  const [selectedId, setSelectedId]       = useState(null)
-  const [cache, setCache]                 = useState(new Map()) // id → {generated_code, generated_tests, generated_language, generated_notes} | null
-  const [loadingIds, setLoadingIds]       = useState(new Set())
-  const [generatingIds, setGeneratingIds] = useState(new Set())
-  const [activeFile, setActiveFile]       = useState('code')
-  const [error, setError]                 = useState('')
-  const [zipping, setZipping]             = useState(false)
+  const [selectedId, setSelectedId]         = useState(null)
+  const [cache, setCache]                   = useState(new Map()) // id → {generated_code, …}
+  const [loadingIds, setLoadingIds]         = useState(new Set())
+  const [previewingIds, setPreviewingIds]   = useState(new Set())
+  const [generatingIds, setGeneratingIds]   = useState(new Set())
+  const [previewMap, setPreviewMap]         = useState(new Map()) // id → preview result
+  const [batchConfirm, setBatchConfirm]     = useState(null)     // {totalCost, totalTokens, count}
+  const [activeFile, setActiveFile]         = useState('code')
+  const [error, setError]                   = useState('')
+  const [zipping, setZipping]               = useState(false)
 
-  // Track which IDs we've already fetched so we don't re-fetch on every programs update
   const fetchedRef = useRef(new Set())
 
+  // ── Load cached generated code on mount ──────────────────────────────────
   useEffect(() => {
     const toFetch = analyzed.filter(p => !fetchedRef.current.has(p.id))
     if (!toFetch.length) return
@@ -52,7 +55,6 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
         results.forEach(({ id }) => s.delete(id))
         return s
       })
-      // Auto-select: first with code, fallback to first program
       setSelectedId(cur => {
         if (cur) return cur
         const withCode = results.find(r => r.data?.generated_code)
@@ -62,36 +64,109 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analyzed.map(p => p.id).join(',')])
 
+  // ── Step 1: preview single program ───────────────────────────────────────
+  async function handlePreview(programId) {
+    setPreviewingIds(prev => new Set([...prev, programId]))
+    setError('')
+    try {
+      const result = await previewProgramGeneration(programId)
+      setPreviewMap(prev => new Map(prev).set(programId, result))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPreviewingIds(prev => { const s = new Set(prev); s.delete(programId); return s })
+    }
+  }
+
+  function cancelPreview(programId) {
+    setPreviewMap(prev => { const m = new Map(prev); m.delete(programId); return m })
+  }
+
+  // ── Step 2: generate single program (only after preview confirmed) ────────
   async function handleGenerate(programId) {
     setGeneratingIds(prev => new Set([...prev, programId]))
     setError('')
     try {
       const result = await generateFullProgram(programId, { includeTests: false })
-      const entry = {
-        generated_code:     result.code ?? '',
-        generated_tests:    result.tests ?? '',
+      setCache(prev => new Map(prev).set(programId, {
+        generated_code:     result.code     ?? '',
+        generated_tests:    result.tests    ?? '',
         generated_language: result.language ?? 'typescript',
         generated_notes:    Array.isArray(result.notes) ? result.notes.join(' · ') : (result.notes ?? ''),
-      }
-      setCache(prev => new Map(prev).set(programId, entry))
+      }))
     } catch (err) {
       setError(err.message)
     } finally {
       setGeneratingIds(prev => { const s = new Set(prev); s.delete(programId); return s })
+      setPreviewMap(prev => { const m = new Map(prev); m.delete(programId); return m })
     }
   }
 
-  async function handleGenerateAll() {
+  // ── Batch: preview all un-generated programs, then confirm total cost ─────
+  async function handlePreviewAll() {
     setError('')
-    for (const p of analyzed) {
-      if (cache.get(p.id)?.generated_code) continue
+    setBatchConfirm(null)
+    const toPreview = analyzed.filter(
+      p => !cache.get(p.id)?.generated_code && !previewMap.has(p.id)
+    )
+    if (!toPreview.length) return
+
+    setPreviewingIds(prev => new Set([...prev, ...toPreview.map(p => p.id)]))
+
+    const settled = await Promise.allSettled(
+      toPreview.map(p =>
+        previewProgramGeneration(p.id).then(r => ({ id: p.id, r }))
+      )
+    )
+
+    setPreviewingIds(prev => {
+      const s = new Set(prev)
+      toPreview.forEach(p => s.delete(p.id))
+      return s
+    })
+
+    const newPreviews = new Map()
+    let totalCost = 0, totalTokens = 0, firstError = null
+
+    settled.forEach(s => {
+      if (s.status === 'fulfilled') {
+        const { id, r } = s.value
+        newPreviews.set(id, r)
+        totalCost   += r.estimatedCostUsd    ?? 0
+        totalTokens += r.estimatedTotalTokens ?? 0
+      } else {
+        firstError ??= s.reason?.message ?? 'Preview failed'
+      }
+    })
+
+    if (firstError) setError(firstError)
+    if (newPreviews.size) {
+      setPreviewMap(prev => new Map([...prev, ...newPreviews]))
+      setBatchConfirm({ totalCost, totalTokens, count: newPreviews.size })
+    }
+  }
+
+  async function handleConfirmBatch() {
+    setBatchConfirm(null)
+    const toGenerate = analyzed.filter(p => previewMap.has(p.id))
+    for (const p of toGenerate) {
       await handleGenerate(p.id)
     }
   }
 
+  function cancelBatch() {
+    setBatchConfirm(null)
+    const toClear = analyzed.filter(p => previewMap.has(p.id) && !cache.get(p.id)?.generated_code)
+    setPreviewMap(prev => {
+      const m = new Map(prev)
+      toClear.forEach(p => m.delete(p.id))
+      return m
+    })
+  }
+
+  // ── Download zip ──────────────────────────────────────────────────────────
   async function handleDownloadZip() {
-    setZipping(true)
-    setError('')
+    setZipping(true); setError('')
     try {
       const { files, warnings } = await generateProjectFiles(applicationId, { includeTests: false })
       const { default: JSZip } = await import('jszip')
@@ -110,22 +185,29 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
     }
   }
 
-  const selectedProgram = analyzed.find(p => p.id === selectedId)
-  const selectedCache   = selectedId ? cache.get(selectedId) : undefined
-  const hasCode         = !!selectedCache?.generated_code
-  const ext             = selectedCache?.generated_language === 'typescript' ? 'ts' : 'js'
-  const displayCode     = activeFile === 'tests'
+  // ── Derived state ─────────────────────────────────────────────────────────
+  const selectedProgram  = analyzed.find(p => p.id === selectedId)
+  const selectedCache    = selectedId ? cache.get(selectedId) : undefined
+  const hasCode          = !!selectedCache?.generated_code
+  const ext              = selectedCache?.generated_language === 'typescript' ? 'ts' : 'js'
+  const displayCode      = activeFile === 'tests'
     ? (selectedCache?.generated_tests ?? '')
     : (selectedCache?.generated_code ?? '')
 
-  const generatedCount  = analyzed.filter(p => cache.get(p.id)?.generated_code).length
-  const isGeneratingAny = generatingIds.size > 0
-  const allLoading      = loadingIds.size > 0 && cache.size === 0
+  const generatedCount   = analyzed.filter(p => cache.get(p.id)?.generated_code).length
+  const ungeneratedCount = analyzed.filter(p => !cache.get(p.id)?.generated_code).length
+  const isPreviewingAny  = previewingIds.size > 0
+  const isGeneratingAny  = generatingIds.size > 0
+  const allLoading       = loadingIds.size > 0 && cache.size === 0
+
+  const isPreviewing = previewingIds.has(selectedId)
+  const isGenerating = generatingIds.has(selectedId)
+  const hasPreview   = !isGenerating && previewMap.has(selectedId)
 
   return (
     <div className="flex h-full overflow-hidden">
 
-      {/* ── Left sidebar ─────────────────────────── */}
+      {/* ── Left sidebar ───────────────────────────────────────────────────── */}
       <div className="w-60 border-r border-border flex flex-col shrink-0">
 
         {/* Actions */}
@@ -140,20 +222,20 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
             <Button
               size="sm"
               className="w-full"
-              onClick={handleGenerateAll}
-              disabled={isGeneratingAny || analyzed.length === 0}
+              onClick={handlePreviewAll}
+              disabled={isPreviewingAny || isGeneratingAny || ungeneratedCount === 0}
             >
-              {isGeneratingAny
-                ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Generating…</>
-                : <><Play className="mr-2 h-3.5 w-3.5" />Generate all</>
+              {isPreviewingAny
+                ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Building skeletons…</>
+                : isGeneratingAny
+                  ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Generating…</>
+                  : <><Eye className="mr-2 h-3.5 w-3.5" />Preview all</>
               }
             </Button>
           )}
 
           <Button
-            size="sm"
-            variant="outline"
-            className="w-full"
+            size="sm" variant="outline" className="w-full"
             onClick={handleDownloadZip}
             disabled={zipping || generatedCount === 0}
           >
@@ -168,25 +250,45 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
           </p>
         </div>
 
+        {/* Batch confirm banner ── appears after "Preview all" */}
+        {batchConfirm && (
+          <div className="p-3 border-b border-amber-500/30 bg-amber-500/10 space-y-2">
+            <p className="text-xs font-medium">{batchConfirm.count} program{batchConfirm.count !== 1 ? 's' : ''} ready</p>
+            <p className="text-xs text-muted-foreground">
+              ~{batchConfirm.totalTokens?.toLocaleString()} tokens ·{' '}
+              <span className="font-semibold text-foreground">${batchConfirm.totalCost?.toFixed(4)}</span> total
+            </p>
+            <div className="flex gap-1">
+              <Button size="sm" className="flex-1 h-7 text-xs" onClick={handleConfirmBatch}>
+                <Zap className="mr-1 h-3 w-3" />Run AI
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={cancelBatch}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Program list */}
         <div className="flex-1 overflow-y-auto">
           {analyzed.length === 0 ? (
             <p className="text-xs text-muted-foreground p-4">No analyzed programs yet.</p>
           ) : (
             analyzed.map(p => {
-              const c          = cache.get(p.id)
-              const isLoading  = loadingIds.has(p.id)
-              const isGen      = generatingIds.has(p.id)
-              const done       = !!c?.generated_code
+              const isLoading = loadingIds.has(p.id)
+              const isPrev    = previewingIds.has(p.id)
+              const isGen     = generatingIds.has(p.id)
+              const hasPrev   = previewMap.has(p.id) && !isGen
+              const done      = !!cache.get(p.id)?.generated_code
               return (
                 <button
                   key={p.id}
                   onClick={() => { setSelectedId(p.id); setActiveFile('code') }}
                   className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center gap-2 transition-colors hover:bg-muted/40 ${selectedId === p.id ? 'bg-muted' : ''}`}
                 >
-                  {(isLoading || isGen)
+                  {(isLoading || isPrev || isGen)
                     ? <Loader2 className="w-1.5 h-1.5 shrink-0 animate-spin text-muted-foreground" />
-                    : <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${done ? 'bg-green-500' : 'bg-border'}`} />
+                    : <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${done ? 'bg-green-500' : hasPrev ? 'bg-amber-400' : 'bg-border'}`} />
                   }
                   <span className="truncate">{p.name}</span>
                 </button>
@@ -196,7 +298,7 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
         </div>
       </div>
 
-      {/* ── Right: code viewer ───────────────────── */}
+      {/* ── Right panel ────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden flex flex-col">
 
         {!selectedProgram ? (
@@ -205,15 +307,31 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
           </div>
 
         ) : loadingIds.has(selectedId) ? (
-          <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
 
-        ) : generatingIds.has(selectedId) ? (
+        ) : isPreviewing ? (
           <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Generating TypeScript…</span>
+            <span className="text-sm">Building skeleton…</span>
           </div>
+
+        ) : isGenerating ? (
+          <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">
+              Filling {previewMap.get(selectedId)?.holeCount ?? ''} hole{(previewMap.get(selectedId)?.holeCount ?? 0) !== 1 ? 's' : ''} with AI…
+            </span>
+          </div>
+
+        ) : hasPreview ? (
+          <PreviewPanel
+            preview={previewMap.get(selectedId)}
+            programName={selectedProgram.name}
+            onConfirm={() => handleGenerate(selectedId)}
+            onCancel={() => cancelPreview(selectedId)}
+          />
 
         ) : !hasCode ? (
           <div className="flex flex-col items-center justify-center h-full gap-3">
@@ -221,8 +339,8 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
               No code generated yet for <span className="font-mono">{selectedProgram.name}</span>
             </p>
             {canEdit && (
-              <Button onClick={() => handleGenerate(selectedId)}>
-                <Play className="mr-2 h-4 w-4" />Generate TypeScript
+              <Button onClick={() => handlePreview(selectedId)}>
+                <Eye className="mr-2 h-4 w-4" />Preview cost &amp; skeleton
               </Button>
             )}
           </div>
@@ -232,7 +350,6 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
 
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0 gap-3">
-              {/* File tabs */}
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setActiveFile('code')}
@@ -250,12 +367,9 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
                 )}
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-2">
                 <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
+                  size="sm" variant="outline" className="h-7 text-xs"
                   onClick={() => downloadText(
                     displayCode,
                     activeFile === 'tests'
@@ -267,11 +381,9 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
                 </Button>
                 {canEdit && (
                   <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-xs"
-                    onClick={() => handleGenerate(selectedId)}
-                    disabled={generatingIds.has(selectedId)}
+                    size="sm" variant="ghost" className="h-7 text-xs"
+                    onClick={() => handlePreview(selectedId)}
+                    disabled={previewingIds.has(selectedId)}
                   >
                     <RefreshCw className="mr-1.5 h-3 w-3" />Regenerate
                   </Button>
@@ -302,6 +414,60 @@ export default function AppCodeTab({ programs, applicationId, canEdit }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── PreviewPanel ─────────────────────────────────────────────────────────────
+function PreviewPanel({ preview, programName, onConfirm, onCancel }) {
+  const { skeleton, holeCount, estimatedTotalTokens, estimatedCostUsd, hasIR } = preview ?? {}
+  return (
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+
+      {/* Cost banner */}
+      <div className="px-4 py-3 border-b border-border shrink-0 flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <p className="text-sm font-medium">Cost estimate</p>
+          <p className="text-xs text-muted-foreground">
+            {hasIR
+              ? <>{holeCount} AI hole{holeCount !== 1 ? 's' : ''} · ~{estimatedTotalTokens?.toLocaleString()} tokens · <span className="font-semibold text-foreground">${estimatedCostUsd?.toFixed(4)}</span></>
+              : <>Full-context mode · ~{estimatedTotalTokens?.toLocaleString()} tokens · <span className="font-semibold text-foreground">${estimatedCostUsd?.toFixed(4)}</span></>
+            }
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button size="sm" onClick={onConfirm}>
+            <Zap className="mr-1.5 h-3.5 w-3.5" />Run AI
+          </Button>
+        </div>
+      </div>
+
+      {/* Skeleton preview — only when IR is available */}
+      {skeleton ? (
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <p className="px-4 py-1.5 text-xs text-muted-foreground font-mono border-b border-border shrink-0">
+            {programName}.ts — skeleton preview
+          </p>
+          <div className="flex-1 overflow-auto">
+            <SyntaxHighlighter
+              language="typescript"
+              style={oneDark}
+              customStyle={{ margin: 0, borderRadius: 0, fontSize: '11.5px', lineHeight: 1.6, minHeight: '100%' }}
+              showLineNumbers
+            >
+              {skeleton}
+            </SyntaxHighlighter>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-xs text-muted-foreground text-center max-w-xs leading-relaxed">
+            No skeleton available for this program.<br />
+            The AI will process the full COBOL source in one pass (full-context mode).
+          </p>
+        </div>
+      )}
     </div>
   )
 }
