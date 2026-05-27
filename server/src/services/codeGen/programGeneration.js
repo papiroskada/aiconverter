@@ -1,4 +1,15 @@
 import { findProgramById } from '../../models/programs.js'
+
+function wrapWithTodo(code, hole) {
+  const stepLines = hole.steps?.length
+    ? hole.steps.map((s, i) => `  // ${i + 1}. ${s}`).join('\n')
+    : null
+  const header = [
+    `  // ── TODO: AI-generated — verify against original COBOL (${hole.id}) ─`,
+    stepLines ? `  // Expected logic:\n${stepLines}` : null,
+  ].filter(Boolean).join('\n')
+  return `${header}\n${code}\n  // ── END AI-generated ──────────────────────────────────────────────`
+}
 import { getAnalysisByProgramId } from '../../models/programAnalysis.js'
 import { getSettings } from '../../models/settings.js'
 import { getProvider } from '../../ai/providers/base.js'
@@ -51,7 +62,8 @@ export async function generateProgram(programId, { includeTests = false } = {}) 
       if (!hole) continue
       const ctx    = holeToContext(hole, paragraphChunks, currentSkeleton, settings, tableSchemas, wsConstants)
       const result = await provider.fillHole(ctx)
-      const filled = result.code ?? '  // hole fill failed'
+      const rawCode = result.code ?? '  // hole fill failed'
+      const filled  = wrapWithTodo(rawCode, hole)
       currentSkeleton = assembleSkeleton(currentSkeleton, [{ id: holeId, code: filled }])
     }
     code                 = currentSkeleton

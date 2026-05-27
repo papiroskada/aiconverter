@@ -251,7 +251,11 @@ export function generateSkeleton(program, analysis, chunks, structuralCache, set
 
   return [
     `// [MECHANICAL] skeleton — ${name}`,
-    `// Generated ${new Date().toISOString().slice(0, 10)} — fill the [AI_HOLE] sections`,
+    `// Generated ${new Date().toISOString().slice(0, 10)}`,
+    ``,
+    `// TODO: replace with your project's shared pg pool`,
+    `import { Pool } from 'pg'`,
+    `const pool = new Pool({ connectionString: process.env.DATABASE_URL })`,
     ``,
     interfaces || `// No typed linkage interface found for ${name}`,
     ``,

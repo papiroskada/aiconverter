@@ -19,9 +19,9 @@ export function assembleCode(result) {
 export function getPatterns(settings) {
   return {
     language:        settings.code_language          ?? 'typescript',
-    dbRead:          settings.code_db_read           ?? "await db.select('{table}', { {key}: {value} })",
-    dbWrite:         settings.code_db_write          ?? "await db.insert('{table}', data) / await db.update('{table}', data, { {key} })",
-    errorConvention: settings.code_error_convention  ?? "return { error: {code}, field: '{field}' }",
+    dbRead:          settings.code_db_read           ?? "const { rows: [{resultVar}] } = await pool.query('SELECT {cols} FROM {table} WHERE {key} = $1', [{value}])  // if (!{resultVar}) { /* not found */ }",
+    dbWrite:         settings.code_db_write          ?? "await pool.query('INSERT INTO {table} ({cols}) VALUES ({$params})', [{values}])  // or UPDATE: await pool.query('UPDATE {table} SET {col} = $1 WHERE {key} = $2', [val, key])",
+    errorConvention: settings.code_error_convention  ?? "output.{rtnStsField} = {code}; return output",
     externalCall:    settings.code_external_call     ?? "await callProgram('{name}', input)",
   }
 }

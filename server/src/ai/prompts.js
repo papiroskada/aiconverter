@@ -187,7 +187,8 @@ Return ONLY valid JSON:
 Rules:
 - Implement the COBOL logic from the source above — do not invent logic not present in the source
 - If BUSINESS STEPS are provided, treat them as the primary implementation guide (they clarify intent where COBOL is hard to read)
-- For shared helper functions (returning boolean): return false early when the check fails; set error fields in output before returning false
+- For shared helper functions (returning boolean): set the return status field in output (e.g. output.rtnSts = code), then return false; caller returns output immediately
+- For DB reads: use pool.query() with parameterized SQL ($1, $2, ...); use actual column names from DB TABLE FIELDS when available
 - Use async/await for all DB operations
 - Use camelCase field names (e.g. CLURI-PRS-MD → cluriPrsMd)
 - Do not wrap in a function definition — return only the body statements
