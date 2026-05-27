@@ -101,6 +101,85 @@ export async function generateProgram(programId, { includeTests = false } = {}) 
   return out
 }
 
+// Per-model pricing in USD per 1M tokens: [input, output]
+const MODEL_PRICING = {
+  'gpt-4o':                    [2.50,  10.00],
+  'gpt-4o-mini':               [0.15,   0.60],
+  'gpt-4-turbo':               [10.00, 30.00],
+  'claude-opus-4-7':           [15.00, 75.00],
+  'claude-sonnet-4-6':         [3.00,  15.00],
+  'claude-haiku-4-5-20251001': [0.80,   4.00],
+}
+
+function estimateCost(model, inputTokens, outputTokens) {
+  const [inRate, outRate] = MODEL_PRICING[model] ?? MODEL_PRICING['gpt-4o']
+  const usd = (inputTokens * inRate + outputTokens * outRate) / 1_000_000
+  return Math.round(usd * 10_000) / 10_000
+}
+
+export async function previewProgram(programId) {
+  const settings = await getSettings()
+  const { program, analysis, paragraphChunks, performGraph, preDispatchNames, tableSchemas, wsConstants } =
+    await loadProgramData(programId)
+
+  const entryPoints = analysis.entry_points ?? []
+  if (!entryPoints.length) throw Object.assign(new Error('No entry points in analysis'), { status: 422 })
+
+  const patterns = getPatterns(settings)
+  const cache    = program.structural_cache
+  const hasIR    = Array.isArray(cache?.linkageVars) && cache.linkageVars.length > 0
+  const model    = settings.analysis_model ?? 'gpt-4o'
+
+  if (!hasIR) {
+    const allParagraphNames = [...new Set(entryPoints.flatMap(ep => ep.paragraphNames ?? []))]
+    const relevantChunks    = selectRelevantChunks(paragraphChunks, allParagraphNames, performGraph, preDispatchNames)
+    const context           = buildProgramContext(program, analysis, relevantChunks, tableSchemas, wsConstants, settings)
+    const inputTokens       = Math.ceil(context.length / 4)
+    const outputTokens      = 800
+    return {
+      programName:            program.name,
+      language:               patterns.language,
+      skeleton:               null,
+      holeCount:              1,
+      holes:                  [],
+      estimatedInputTokens:   inputTokens,
+      estimatedOutputTokens:  outputTokens,
+      estimatedTotalTokens:   inputTokens + outputTokens,
+      estimatedCostUsd:       estimateCost(model, inputTokens, outputTokens),
+      hasIR:                  false,
+    }
+  }
+
+  const skeleton = generateSkeleton(program, analysis, paragraphChunks, cache, settings, wsConstants)
+  const holes    = extractHoles(skeleton)
+
+  const holeDetails = holes.map(hole => {
+    const ctx         = holeToContext(hole, paragraphChunks, skeleton, settings, tableSchemas, wsConstants)
+    const inputTokens = Math.ceil(
+      (ctx.surroundingCode.length + ctx.cobolText.length +
+       (ctx.wsConstants?.length ?? 0) + (ctx.tableSchemas?.length ?? 0)) / 4
+    )
+    const outputTokens = 300
+    return { id: hole.id, paragraphCount: hole.paragraphs.length, estimatedInputTokens: inputTokens, estimatedOutputTokens: outputTokens }
+  })
+
+  const totalInput  = holeDetails.reduce((s, h) => s + h.estimatedInputTokens, 0)
+  const totalOutput = holeDetails.reduce((s, h) => s + h.estimatedOutputTokens, 0)
+
+  return {
+    programName:            program.name,
+    language:               patterns.language,
+    skeleton,
+    holeCount:              holes.length,
+    holes:                  holeDetails,
+    estimatedInputTokens:   totalInput,
+    estimatedOutputTokens:  totalOutput,
+    estimatedTotalTokens:   totalInput + totalOutput,
+    estimatedCostUsd:       estimateCost(model, totalInput, totalOutput),
+    hasIR:                  true,
+  }
+}
+
 export async function checkConsistency(programIds) {
   const [programs, analyses] = await Promise.all([
     Promise.all(programIds.map(findProgramById)),

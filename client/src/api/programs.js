@@ -62,6 +62,15 @@ export async function patchFlags(id, condition, flag) {
   return res.json()
 }
 
+export async function previewProgramGeneration(id) {
+  const res = await apiFetch(`${BASE}/${id}/generate-preview`)
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new Error(b?.error || 'Preview failed')
+  }
+  return res.json()
+}
+
 export async function generateFullProgram(id, { includeTests = false } = {}) {
   const res = await apiJson(`${BASE}/${id}/generate-program`, {
     method: 'POST',

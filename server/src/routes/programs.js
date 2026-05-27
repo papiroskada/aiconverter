@@ -6,7 +6,7 @@ import { getAnalysisByProgramId, updateFlag, patchEntryPoints, saveGeneratedCode
 import { upsertFlag, deleteFlag, getFlagsForProgram } from '../models/programFlags.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPointTests, generateProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
+import { generateEntryPointTests, generateProgram, previewProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 import { buildVerificationReport } from '../services/codeGen/verificationService.js'
@@ -214,6 +214,14 @@ router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res) 
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }
+})
+
+// GET /api/programs/:id/generate-preview
+router.get('/:id/generate-preview', requireRole('developer', 'admin'), async (req, res, next) => {
+  try {
+    const result = await previewProgram(req.params.id)
+    res.json(result)
+  } catch (err) { next(err) }
 })
 
 // POST /api/programs/:id/generate — delegates to generate-program (kept for backwards compat)

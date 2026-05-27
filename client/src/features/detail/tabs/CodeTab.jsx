@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Download, Loader2, RefreshCw } from 'lucide-react'
+import { Download, Loader2, RefreshCw, Zap } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { generateFullProgram, getGeneratedCode, generateProjectFiles } from '@/api/programs.js'
+import { generateFullProgram, getGeneratedCode, generateProjectFiles, previewProgramGeneration } from '@/api/programs.js'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -44,6 +44,7 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
   const [includeTests, setIncludeTests] = useState(false)
   const [activeFile, setActiveFile] = useState('code')
   const [zipping, setZipping]       = useState(false)
+  const [preview, setPreview]       = useState(null)
 
   useEffect(() => {
     getGeneratedCode(programId).then(cached => {
@@ -55,6 +56,18 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
       if (cached.generated_code) setStatus('done')
     }).catch(() => {})
   }, [programId])
+
+  async function handlePreview() {
+    setStatus('previewing'); setError('')
+    try {
+      const result = await previewProgramGeneration(programId)
+      setPreview(result)
+      setLanguage(result.language ?? 'typescript')
+      setStatus('preview')
+    } catch (err) {
+      setError(err.message); setStatus('error')
+    }
+  }
 
   async function handleGenerate() {
     setStatus('generating'); setError(''); setTests(''); setVerification(null); setActiveFile('code')
@@ -99,16 +112,63 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
         <p className="text-sm text-muted-foreground text-center max-w-xs">
           Generate a TypeScript/JavaScript module from the COBOL analysis.
         </p>
-        {canEdit && (
-          <>
+        {canEdit && <Button onClick={handlePreview}>Preview cost &amp; skeleton</Button>}
+        {!canEdit && <p className="text-xs text-muted-foreground">Code generation requires developer role.</p>}
+      </div>
+    )
+  }
+
+  if (status === 'previewing') {
+    return (
+      <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span className="text-sm">Building skeleton…</span>
+      </div>
+    )
+  }
+
+  if (status === 'preview') {
+    const { skeleton, holeCount, estimatedTotalTokens, estimatedCostUsd, hasIR } = preview ?? {}
+    const ext = language === 'typescript' ? 'ts' : 'js'
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-border bg-muted/40 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Cost estimate</p>
+            <p className="text-xs text-muted-foreground">
+              {hasIR
+                ? <>{holeCount} AI hole{holeCount !== 1 ? 's' : ''} · ~{estimatedTotalTokens?.toLocaleString()} tokens · <span className="font-semibold text-foreground">${estimatedCostUsd?.toFixed(4)}</span></>
+                : <>Full-context mode · ~{estimatedTotalTokens?.toLocaleString()} tokens · <span className="font-semibold text-foreground">${estimatedCostUsd?.toFixed(4)}</span></>
+              }
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-2">
-              <Checkbox id="inc-tests" checked={includeTests} onCheckedChange={setIncludeTests} />
-              <Label htmlFor="inc-tests" className="text-sm cursor-pointer">Include Vitest unit tests</Label>
+              <Checkbox id="inc-tests-prev" checked={includeTests} onCheckedChange={setIncludeTests} />
+              <Label htmlFor="inc-tests-prev" className="text-sm cursor-pointer">Include tests</Label>
             </div>
-            <Button onClick={handleGenerate}>Generate module</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setStatus('idle'); setPreview(null) }}>Cancel</Button>
+            <Button size="sm" onClick={handleGenerate}>
+              <Zap className="mr-1.5 h-3.5 w-3.5" />Run AI
+            </Button>
+          </div>
+        </div>
+
+        {skeleton && (
+          <>
+            <p className="text-xs text-muted-foreground font-mono">{programName}.{ext} — skeleton preview</p>
+            <div className="rounded-md overflow-hidden border border-border text-xs max-h-[55vh] overflow-y-auto">
+              <SyntaxHighlighter
+                language="typescript"
+                style={oneDark}
+                customStyle={{ margin: 0, borderRadius: 0, fontSize: '11.5px', lineHeight: 1.6, background: 'transparent' }}
+                showLineNumbers
+              >
+                {skeleton}
+              </SyntaxHighlighter>
+            </div>
           </>
         )}
-        {!canEdit && <p className="text-xs text-muted-foreground">Code generation requires developer role.</p>}
       </div>
     )
   }
@@ -117,7 +177,7 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
     return (
       <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">Generating{includeTests ? ' code + tests' : ''}…</span>
+        <span className="text-sm">Filling {preview?.holeCount ?? ''} hole{(preview?.holeCount ?? 0) !== 1 ? 's' : ''} with AI…</span>
       </div>
     )
   }
@@ -126,7 +186,7 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
     return (
       <div className="space-y-4 py-8">
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
-        {canEdit && <Button onClick={handleGenerate} variant="outline">Retry</Button>}
+        {canEdit && <Button onClick={handlePreview} variant="outline">Retry</Button>}
       </div>
     )
   }
@@ -183,7 +243,7 @@ export default function CodeTab({ programId, programName, applicationId, canEdit
           </Button>
         )}
         {canEdit && (
-          <Button size="sm" variant="ghost" onClick={() => { setStatus('idle'); setVerification(null) }} className="ml-auto">
+          <Button size="sm" variant="ghost" onClick={() => { setStatus('idle'); setPreview(null); setVerification(null) }} className="ml-auto">
             <RefreshCw className="mr-2 h-3.5 w-3.5" />Regenerate
           </Button>
         )}

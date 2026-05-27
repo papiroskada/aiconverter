@@ -288,6 +288,28 @@ export function extractHoles(skeleton) {
   return holes
 }
 
+const PERFORM_KW = new Set(['UNTIL', 'VARYING', 'TIMES', 'WITH', 'TEST', 'AFTER', 'BEFORE'])
+
+// Extract ordered direct PERFORM/GO TO calls from a paragraph's COBOL text
+function extractCallOrder(cobolText) {
+  const order = []
+  const seen = new Set()
+  const re = /\b(PERFORM|GO\s+TO)\s+([A-Z][A-Z0-9-]+)/gi
+  let m
+  while ((m = re.exec(cobolText)) !== null) {
+    const verb = m[1].replace(/\s+/, ' ').toUpperCase()
+    const name = m[2].toUpperCase()
+    if (PERFORM_KW.has(name)) continue
+    // GO TO X-EXIT is a jump-to-end label, not a real call — skip it
+    if (verb === 'GO TO' && name.endsWith('-EXIT')) continue
+    if (!seen.has(name)) {
+      seen.add(name)
+      order.push(name)
+    }
+  }
+  return order
+}
+
 // Build focused context object for AI to fill one hole
 export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {}, wsConstants = []) {
   // Include chunks for listed paragraphs + their SCCLOOP siblings (-LOOP, -END, -EXIT)
@@ -320,6 +342,10 @@ export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {
     })
     .join('\n\n')
 
+  // Extract call order from root paragraph (hole.paragraphs[0] = BFS start = root)
+  const rootChunk = chunks.find(c => c.chunk_name === hole.paragraphs[0])
+  const callOrder = rootChunk ? extractCallOrder(rootChunk.cobol_text) : []
+
   const patterns = getPatterns(settings ?? {})
 
   const wsConstStr = wsConstants.length
@@ -336,6 +362,7 @@ export function holeToContext(hole, chunks, skeleton, settings, tableSchemas = {
     steps:          hole.steps ?? [],
     tableSchemas:   relevantTables,
     wsConstants:    wsConstStr,
+    callOrder,
     patterns,
   }
 }

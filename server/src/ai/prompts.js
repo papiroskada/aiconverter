@@ -171,6 +171,7 @@ SECTION METADATA:
 - Pattern: ${ctx.pattern}
 - Reads from: ${ctx.reads.join(', ') || 'none'}
 - Writes to:  ${ctx.writes.join(', ') || 'none'}
+${ctx.callOrder?.length ? `\nCALL SEQUENCE (direct PERFORM/GO TO calls from root paragraph, in source order — implement in this order):\n${ctx.callOrder.map((name, i) => `  ${i + 1}. ${name}`).join('\n')}\n` : ''}
 ${ctx.steps?.length ? `\nBUSINESS STEPS — implement these in order (authoritative description of this section's logic):\n${ctx.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
 ${ctx.wsConstants ? `\nWORKING STORAGE CONSTANTS (use exact values, do not invent alternatives):\n${ctx.wsConstants}\n` : ''}
 ${ctx.tableSchemas ? `\nDB TABLE FIELDS (camelCase names to use in queries):\n${ctx.tableSchemas}` : ''}
@@ -186,6 +187,7 @@ Return ONLY valid JSON:
 
 Rules:
 - Implement the COBOL logic from the source above — do not invent logic not present in the source
+- CALL SEQUENCE defines the implementation order — each item is a paragraph called by the root; implement them in that order
 - If BUSINESS STEPS are provided, treat them as the primary implementation guide (they clarify intent where COBOL is hard to read)
 - For shared helper functions (returning boolean): set the return status field in output (e.g. output.rtnSts = code), then return false; caller returns output immediately
 - For DB reads: use pool.query() with parameterized SQL ($1, $2, ...); use actual column names from DB TABLE FIELDS when available
