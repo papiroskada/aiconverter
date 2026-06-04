@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 
 const CLAUDE_INTERFACE_MODELS = [
   'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001',
@@ -194,6 +195,60 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Code conventions */}
+        <Card>
+          <CardHeader><CardTitle className="text-base">Code conventions</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="code-db-read">DB read pattern</Label>
+              <p className="text-xs text-muted-foreground">Placeholders: <code>{'{table}'}</code> <code>{'{key}'}</code> <code>{'{value}'}</code> <code>{'{resultVar}'}</code> <code>{'{cols}'}</code></p>
+              <Textarea
+                id="code-db-read"
+                rows={2}
+                value={settings?.code_db_read ?? ''}
+                onChange={setEv('code_db_read')}
+                className="font-mono text-sm"
+              />
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              <Label htmlFor="code-db-write">DB write pattern</Label>
+              <p className="text-xs text-muted-foreground">Placeholders: <code>{'{table}'}</code> <code>{'{cols}'}</code> <code>{'{key}'}</code> <code>{'{$params}'}</code> <code>{'{values}'}</code></p>
+              <Textarea
+                id="code-db-write"
+                rows={2}
+                value={settings?.code_db_write ?? ''}
+                onChange={setEv('code_db_write')}
+                className="font-mono text-sm"
+              />
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              <Label htmlFor="code-error-convention">Error handling pattern</Label>
+              <p className="text-xs text-muted-foreground">Placeholders: <code>{'{code}'}</code> <code>{'{field}'}</code> <code>{'{rtnStsField}'}</code></p>
+              <Textarea
+                id="code-error-convention"
+                rows={2}
+                value={settings?.code_error_convention ?? ''}
+                onChange={setEv('code_error_convention')}
+                className="font-mono text-sm"
+              />
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              <Label htmlFor="code-external-call">External call pattern</Label>
+              <p className="text-xs text-muted-foreground">Placeholders: <code>{'{name}'}</code></p>
+              <Textarea
+                id="code-external-call"
+                rows={2}
+                value={settings?.code_external_call ?? ''}
+                onChange={setEv('code_external_call')}
+                className="font-mono text-sm"
+              />
             </div>
           </CardContent>
         </Card>
