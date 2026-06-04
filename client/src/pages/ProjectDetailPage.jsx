@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Play, Zap, Trash2, RotateCcw, Upload, MoreHorizontal,
-  ChevronLeft, Loader2, X, Download, GitFork
+  ChevronLeft, Loader2, X, Download, Users
 } from 'lucide-react'
-import { fetchApplication, startApplicationAnalysis, cancelApplication, deleteApplication } from '@/api/applications.js'
+import { fetchApplication, startApplicationAnalysis, cancelApplication, deleteApplication, fetchApplicationMembers, addApplicationMember, removeApplicationMember } from '@/api/applications.js'
 import { deleteProgram, triggerReanalyze, generateProjectFiles } from '@/api/programs.js'
 import { useAuth } from '@/auth/AuthContext.jsx'
 import { useAppSSE } from '@/hooks/useAppSSE.js'
@@ -15,14 +15,19 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import UploadDialog from '@/features/programs/UploadDialog.jsx'
 import ProgramDetail from '@/features/detail/ProgramDetail.jsx'
 import { MiniPipeline } from '@/components/AnalysisPipeline.jsx'
 import AppCodeTab from '@/features/code/AppCodeTab.jsx'
-import ProgramGraph from '@/components/Graph/ProgramGraph.jsx'
-import { useApplicationGraph } from '@/hooks/useApplicationGraph.js'
+
+const FLAG_CONFIG = {
+  approved:   { icon: '✓', cls: 'text-green-400 border-green-400/30 bg-green-950/40' },
+  warning:    { icon: '⚠', cls: 'text-amber-400 border-amber-400/30 bg-amber-950/40' },
+  deprecated: { icon: '✕', cls: 'text-red-400   border-red-400/30   bg-red-950/40'   },
+}
 
 const STATUS_CONFIG = {
   analyzed:  { label: 'Analyzed',  dot: 'bg-green-500',              badge: 'default' },
@@ -39,10 +44,6 @@ function StatusBadge({ status }) {
       {cfg.label}
     </Badge>
   )
-}
-
-function flagCount(flags) {
-  return Object.values(flags ?? {}).filter(Boolean).length
 }
 
 function DeleteDialog({ open, onOpenChange, title, description, onConfirm }) {
@@ -95,7 +96,13 @@ export default function ProjectDetailPage() {
   const [programErrors, setProgramErrors] = useState(new Map())
   const [zipping, setZipping] = useState(false)
   const [view, setView] = useState('programs')
-  const { nodes: graphNodes, edges: graphEdges, loading: graphLoading, onNodesChange: onGraphNodesChange } = useApplicationGraph(view === 'graph' ? appId : null)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [members, setMembers] = useState([])
+  const [shareEmail, setShareEmail] = useState('')
+  const [shareLoading, setShareLoading] = useState(false)
+  const [shareError, setShareError] = useState('')
+
+  const isOwner = app?.is_owner === true || app?.is_owner === 't'
 
   const load = useCallback(async () => {
     try {
@@ -111,6 +118,12 @@ export default function ProjectDetailPage() {
   }, [appId, navigate])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (shareOpen) {
+      fetchApplicationMembers(appId).then(setMembers).catch(() => {})
+    }
+  }, [shareOpen, appId])
 
   useAppSSE(analyzing ? appId : null, (event, data) => {
     if (event === 'progress' && data.programId) {
@@ -247,6 +260,11 @@ export default function ProjectDetailPage() {
 
           {canEdit && (
             <div className="flex items-center gap-2 shrink-0">
+              {isOwner && (
+                <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+                  <Users className="mr-2 h-4 w-4" />Share
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
                 <Upload className="mr-2 h-4 w-4" />Upload
               </Button>
@@ -286,13 +304,15 @@ export default function ProjectDetailPage() {
                   <DropdownMenuItem onClick={handleDownloadZip}>
                     <Download className="mr-2 h-4 w-4" />Download project .zip
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setDeleteAppOpen(true)}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />Delete project
-                  </DropdownMenuItem>
+                  {isOwner && <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteAppOpen(true)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />Delete project
+                    </DropdownMenuItem>
+                  </>}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -313,18 +333,17 @@ export default function ProjectDetailPage() {
       {/* View tabs */}
       <div className="border-b border-border shrink-0 overflow-x-auto">
         <div className="flex items-center gap-0 px-6 min-w-fit">
-        {['programs', 'code', 'graph'].map(v => (
+        {['programs', 'code'].map(v => (
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`capitalize text-sm px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`capitalize text-sm px-4 py-2.5 border-b-2 transition-colors ${
               view === v
                 ? 'border-primary text-foreground font-medium'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
-            {v === 'graph' && <GitFork size={13} />}
-            {v === 'programs' ? 'Programs' : v === 'code' ? 'Code' : 'Graph'}
+            {v === 'programs' ? 'Programs' : 'Code'}
           </button>
         ))}
         </div>
@@ -361,15 +380,6 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* Graph tab */}
-      {view === 'graph' && (
-        <div className="flex-1">
-          {graphLoading
-            ? <div className="flex items-center justify-center h-full text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin mr-2" />Loading graph…</div>
-            : <ProgramGraph nodes={graphNodes} edges={graphEdges} onNodesChange={onGraphNodesChange} focusNodeId={null} onNodeClick={node => setSelectedProgramId(node.id)} />
-          }
-        </div>
-      )}
 
       {/* Programs table */}
       {view === 'programs' && <div className="flex-1 overflow-auto">
@@ -395,7 +405,6 @@ export default function ProjectDetailPage() {
             )}
             {filtered.map(program => {
               const sp = stepProgress.get(program.id)
-              const fc = flagCount(program.flags)
               const errMsg = programErrors.get(program.id)
               return (
                 <TableRow
@@ -425,11 +434,17 @@ export default function ProjectDetailPage() {
                     {program.entry_point_count > 0 ? program.entry_point_count : '—'}
                   </TableCell>
                   <TableCell>
-                    {fc > 0 && (
-                      <Badge variant="outline" className="text-xs gap-1 text-amber-400 border-amber-400/30">
-                        ⚠ {fc}
-                      </Badge>
-                    )}
+                    <div className="flex flex-wrap gap-1">
+                      {(program.flags ?? []).map((f, i) => {
+                        const cfg = FLAG_CONFIG[f.flag]
+                        if (!cfg) return null
+                        return (
+                          <Badge key={i} variant="outline" className={`text-xs gap-1 ${cfg.cls}`}>
+                            {cfg.icon} {f.userName}
+                          </Badge>
+                        )
+                      })}
+                    </div>
                   </TableCell>
                   {canEdit && (
                     <TableCell onClick={e => e.stopPropagation()}>
@@ -504,6 +519,70 @@ export default function ProjectDetailPage() {
         description={`This will permanently delete "${deleteProgramTarget?.name}".`}
         onConfirm={() => handleDeleteProgram(deleteProgramTarget)}
       />
+
+      <Dialog open={shareOpen} onOpenChange={open => { setShareOpen(open); if (!open) { setShareEmail(''); setShareError('') } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Share "{app?.name}"</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <form
+              onSubmit={async e => {
+                e.preventDefault()
+                setShareLoading(true); setShareError('')
+                try {
+                  const updated = await addApplicationMember(appId, shareEmail)
+                  setMembers(updated)
+                  setShareEmail('')
+                } catch (err) { setShareError(err.message) }
+                finally { setShareLoading(false) }
+              }}
+              className="flex gap-2"
+            >
+              <Input
+                placeholder="colleague@company.com"
+                type="email"
+                value={shareEmail}
+                onChange={e => setShareEmail(e.target.value)}
+                className="flex-1 h-8 text-sm"
+                required
+              />
+              <Button type="submit" size="sm" disabled={shareLoading || !shareEmail.trim()}>
+                {shareLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Invite
+              </Button>
+            </form>
+            {shareError && <p className="text-xs text-destructive">{shareError}</p>}
+            {members.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground font-medium">Members with access</p>
+                {members.map(m => (
+                  <div key={m.id} className="flex items-center justify-between py-1">
+                    <div>
+                      <p className="text-sm font-medium">{m.name}</p>
+                      <p className="text-xs text-muted-foreground">{m.email}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={async () => {
+                        try {
+                          const updated = await removeApplicationMember(appId, m.id)
+                          setMembers(updated)
+                        } catch {}
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No members yet. Invite someone by email.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -3,7 +3,9 @@ import { toPascal, getPatterns } from './utils.js'
 
 function cobolToCamel(name) {
   if (!name) return 'unknown'
-  return name.toLowerCase().replace(/[^a-z0-9]+(.)/g, (_, c) => c.toUpperCase())
+  const camel = name.toLowerCase().replace(/[^a-z0-9]+(.)/g, (_, c) => c.toUpperCase())
+  if (!/^\d/.test(camel)) return camel
+  return 'p' + camel.charAt(0).toUpperCase() + camel.slice(1)
 }
 
 function picToTs(pic, comp) {
@@ -136,6 +138,7 @@ export function generateSkeleton(program, analysis, chunks, structuralCache, set
   const inputType  = pascal + 'Input'
   const outputType = pascal + 'Output'
   const eps        = analysis.entry_points ?? []
+  const hasDb      = (analysis.db_tables ?? []).length > 0
 
   const interfaces    = buildInterfaces(name, lv, pt)
   const defaultOutput = buildDefaultOutput(name, lv, pt)
@@ -249,14 +252,18 @@ export function generateSkeleton(program, analysis, chunks, structuralCache, set
     `}`,
   ].join('\n')
 
-  return [
-    `// [MECHANICAL] skeleton — ${name}`,
-    `// Generated ${new Date().toISOString().slice(0, 10)}`,
-    ``,
+  const pgLines = hasDb ? [
     `// TODO: replace with your project's shared pg pool`,
     `import { Pool } from 'pg'`,
     `const pool = new Pool({ connectionString: process.env.DATABASE_URL })`,
     ``,
+  ] : []
+
+  return [
+    `// [MECHANICAL] skeleton — ${name}`,
+    `// Generated ${new Date().toISOString().slice(0, 10)}`,
+    ``,
+    ...pgLines,
     interfaces || `// No typed linkage interface found for ${name}`,
     ``,
     defaultOutput,

@@ -46,3 +46,27 @@ export async function deleteApplication(id) {
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete application')
 }
+
+export async function fetchApplicationMembers(id) {
+  const res = await apiFetch(`${BASE}/${id}/members`)
+  if (!res.ok) throw new Error('Failed to fetch members')
+  return res.json()
+}
+
+export async function addApplicationMember(id, email) {
+  const res = await apiJson(`${BASE}/${id}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new Error(b.error || 'Failed to add member')
+  }
+  return res.json()
+}
+
+export async function removeApplicationMember(id, memberId) {
+  const res = await apiFetch(`${BASE}/${id}/members/${memberId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to remove member')
+  return res.json()
+}

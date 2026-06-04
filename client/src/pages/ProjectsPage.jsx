@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, FolderOpen, Loader2 } from 'lucide-react'
+import { Plus, FolderOpen, Loader2, Users } from 'lucide-react'
 import { fetchApplications, createApplication } from '@/api/applications.js'
 import { useAuth } from '@/auth/AuthContext.jsx'
 import { Button } from '@/components/ui/button'
@@ -125,6 +125,12 @@ function ProjectCard({ app, onClick }) {
         <p className="text-xs text-muted-foreground mt-2">
           Created {new Date(app.created_at).toLocaleDateString()}
         </p>
+        {!app.isOwner && app.ownerName && (
+          <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
+            <Users size={11} />
+            <span>Shared by {app.ownerName}</span>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

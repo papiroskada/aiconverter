@@ -89,7 +89,7 @@ router.post('/application/:appId/generate', async (req, res, next) => {
 // GET /api/programs
 router.get('/', async (req, res, next) => {
   try {
-    const [programs, edges] = await Promise.all([getAllPrograms(), getAllEdges()])
+    const [programs, edges] = await Promise.all([getAllPrograms(req.user.sub), getAllEdges()])
     res.json({ programs, edges })
   } catch (err) {
     next(err)

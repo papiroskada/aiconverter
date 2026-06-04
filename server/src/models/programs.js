@@ -83,8 +83,21 @@ const GRAPH_SELECT = `
   LEFT JOIN applications a ON a.id = p.application_id
 `
 
-export async function getAllPrograms() {
-  const { rows } = await pool.query(GRAPH_SELECT + 'ORDER BY p.created_at ASC')
+export async function getAllPrograms(userId) {
+  const { rows } = await pool.query(
+    GRAPH_SELECT + `
+    WHERE (
+      p.application_id IS NULL
+      OR a.created_by  IS NULL
+      OR a.created_by   = $1
+      OR EXISTS (
+        SELECT 1 FROM application_members am
+        WHERE am.application_id = p.application_id AND am.user_id = $1
+      )
+    )
+    ORDER BY p.created_at ASC`,
+    [userId]
+  )
   return rows
 }
 

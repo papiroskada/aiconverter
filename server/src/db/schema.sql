@@ -213,3 +213,15 @@ CREATE TABLE IF NOT EXISTS token_usage (
   tokens_out INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Project ownership and member access
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS application_members (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invited_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(application_id, user_id)
+);

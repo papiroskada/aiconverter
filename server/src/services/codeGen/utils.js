@@ -1,8 +1,13 @@
 import { resolveTransitive } from '../../parser/cobolParser.js'
 
 export function toPascal(name) {
-  return name.replace(/[^a-zA-Z0-9]/g, '_')
-    .replace(/(^|_)([a-z\d])/g, (_, __, c) => c.toUpperCase())
+  const pascal = name
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .split('_')
+    .filter(Boolean)
+    .map(seg => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase())
+    .join('')
+  return /^\d/.test(pascal) ? 'P' + pascal : pascal
 }
 
 export function assembleCode(result) {

@@ -16,12 +16,14 @@ const ROLE_VARIANT = { admin: 'destructive', developer: 'default', viewer: 'seco
 function TokenStatsTab() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    fetchTokenStats().then(setStats).finally(() => setLoading(false))
+    fetchTokenStats().then(setStats).catch(err => setError(err.message)).finally(() => setLoading(false))
   }, [])
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+  if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
   if (!stats) return null
 
   const totalAll = stats.totalIn + stats.totalOut
