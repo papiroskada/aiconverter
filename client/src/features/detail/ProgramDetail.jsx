@@ -163,8 +163,8 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
         )}
       </div>
 
-      <Tabs defaultValue="overview" className="flex flex-col min-h-0">
-        <div className="overflow-x-auto shrink-0 border-b border-border">
+      <Tabs defaultValue="overview" className="flex flex-1 flex-col min-h-0">
+        <div className="overflow-x-auto scrollbar-none shrink-0 border-b border-border">
           <TabsList className="my-1 justify-start h-9 bg-transparent rounded-none p-0 gap-0 w-auto">
             {['overview','logic','data','connections','code'].map(tab => (
               <TabsTrigger key={tab} value={tab} className="capitalize rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-9 px-4 text-sm">
@@ -173,7 +173,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
             ))}
           </TabsList>
         </div>
-        <div className="overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle">
           <TabsContent value="overview" className="p-5 mt-0"><OverviewTab analysis={program.analysis} /></TabsContent>
           <TabsContent value="logic" className="p-5 mt-0">
             <LogicTab

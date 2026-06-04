@@ -45,8 +45,8 @@ export default function Sidebar() {
   return (
     <aside className="flex flex-col items-center w-14 border-r border-border bg-card py-3 gap-1 shrink-0">
       {/* Logo */}
-      <div className="flex items-center justify-center w-10 h-10 mb-1 text-primary font-bold text-lg">
-        ⬡
+      <div className="flex items-center justify-center w-10 h-6 mb-1 text-primary font-bold text-lg">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-astroid-icon lucide-astroid"><path d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"/></svg>
       </div>
 
       <Separator className="my-1 w-8" />

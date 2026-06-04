@@ -251,7 +251,9 @@ export default function ProjectDetailPage() {
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <Button variant="ghost" size="sm" asChild className="shrink-0 -ml-2">
-              <Link to="/projects"><ChevronLeft size={16} className="mr-1" />Projects</Link>
+              
+                <Link to="/projects"><div className="flex flex-row items-center"><ChevronLeft size={16} className="mr-1" />Projects </div></Link>
+               
             </Button>
             <span className="text-muted-foreground">/</span>
             <span className="font-mono font-semibold truncate">{app?.name}</span>
@@ -480,7 +482,11 @@ export default function ProjectDetailPage() {
 
       {/* Program detail sheet */}
       <Sheet open={!!selectedProgramId} onOpenChange={open => { if (!open) setSelectedProgramId(null) }}>
-        <SheetContent className="w-full sm:max-w-2xl p-0 overflow-hidden" side="right" showCloseButton={false}>
+        <SheetContent
+          className="p-0 overflow-hidden data-[side=right]:w-[min(56rem,92vw)] data-[side=right]:sm:max-w-none"
+          side="right"
+          showCloseButton={false}
+        >
           {selectedProgramId && (
             <ProgramDetail
               programId={selectedProgramId}
