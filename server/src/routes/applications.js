@@ -19,8 +19,7 @@ import { logAudit } from '../models/auditLog.js'
 
 const router = Router()
 
-// SSE emitter registry: applicationId → Set of response objects
-export const appSseEmitters = new Map()
+import { programSseEmitters, appSseEmitters } from '../emitters.js'
 
 router.post('/', requireRole('developer', 'admin'), async (req, res, next) => {
   try {
@@ -99,7 +98,7 @@ router.post('/:id/analyze', requireRole('developer', 'admin'), async (req, res, 
     const application = await findApplicationById(req.params.id, req.user.sub)
     if (!application) return res.status(404).json({ error: 'Not found' })
     const mode = req.body.mode === 'parallel' ? 'parallel' : 'sequential'
-    startBatchAnalysis(req.params.id, mode, appSseEmitters, req.user?.sub)
+    startBatchAnalysis(req.params.id, mode, appSseEmitters, programSseEmitters, req.user?.sub)
     res.status(202).json({ status: 'analyzing', mode })
   } catch (err) {
     next(err)

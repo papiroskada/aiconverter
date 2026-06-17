@@ -24,8 +24,7 @@ const upload = multer({
 })
 
 import pool from '../db/client.js'
-
-const sseEmitters = new Map()
+import { programSseEmitters as sseEmitters } from '../emitters.js'
 
 // POST /api/programs/program-types
 router.post('/program-types', async (req, res, next) => {

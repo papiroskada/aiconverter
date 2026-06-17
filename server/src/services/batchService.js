@@ -31,7 +31,7 @@ export function cancelBatch(applicationId) {
   for (const id of ids) cancelProgram(id)
 }
 
-export async function startBatchAnalysis(applicationId, mode, appSseEmitters, userId = null) {
+export async function startBatchAnalysis(applicationId, mode, appSseEmitters, programSseEmitters, userId = null) {
   const [programs, settings] = await Promise.all([
     getApplicationPrograms(applicationId),
     getSettings(),
@@ -51,7 +51,7 @@ export async function startBatchAnalysis(applicationId, mode, appSseEmitters, us
   await updateApplicationStatus(applicationId, 'analyzing')
   batchProgramIds.set(applicationId, pending.map(p => p.id))
 
-  const sseEmitters = new Map() // program-level SSE not used in batch; app-level handles progress
+  const sseEmitters = programSseEmitters // real per-program SSE — allows ProgramDetail to receive events during batch
   const tBatch = Date.now()
 
   const run = async () => {

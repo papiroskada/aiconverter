@@ -130,14 +130,14 @@ export default function ProjectDetailPage() {
       if (data.stage === 'parsing') {
         setStepProgress(prev => {
           const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'structural', message: data.message ?? null })
+          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'parsing', message: data.message ?? null })
           return m
         })
       }
       if (data.stage === 'analysis') {
         setStepProgress(prev => {
           const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), message: data.message ?? null })
+          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'structural', message: data.message ?? null })
           return m
         })
       }
@@ -159,10 +159,12 @@ export default function ProjectDetailPage() {
         setStepProgress(prev => { const m = new Map(prev); m.delete(data.programId); return m })
       }
     }
-    if ((event === 'failed') && data.programId) {
+    if (event === 'failed' && data.programId) {
       setProgramErrors(prev => new Map(prev).set(data.programId, data.error || 'Analysis failed'))
     }
-    if (event === 'done' || event === 'failed' || event === 'cancelled') {
+    // Only reset batch state on batch-level events (applicationId present).
+    // Per-program done/failed/cancelled events also have programId — those are handled above.
+    if ((event === 'done' || event === 'failed' || event === 'cancelled') && !data.programId) {
       setAnalyzing(false)
       setBatchProgress(null)
       setStepProgress(new Map())

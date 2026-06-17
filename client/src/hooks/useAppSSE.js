@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { getAccessToken } from '@/api/client.js'
 
 export function useAppSSE(applicationId, onEvent) {
   const onEventRef = useRef(onEvent)
@@ -6,7 +7,8 @@ export function useAppSSE(applicationId, onEvent) {
 
   useEffect(() => {
     if (!applicationId) return
-    const es = new EventSource(`/api/applications/${applicationId}/stream`)
+    const token = getAccessToken()
+    const es = new EventSource(`/api/applications/${applicationId}/stream${token ? `?token=${token}` : ''}`)
 
     const handle = (e) => {
       try {

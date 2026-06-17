@@ -1,5 +1,45 @@
+import { useState, useEffect, useRef } from 'react'
 import { Check, Loader2, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+const MIN_STAGE_MS = 15000
+
+// Ensures each stage is visible for at least MIN_STAGE_MS before transitioning.
+// Queues rapid transitions and plays them sequentially.
+function useMinStageDuration(activeStage) {
+  const [displayed, setDisplayed] = useState(activeStage)
+  const prevRef    = useRef(activeStage)
+  const queueRef   = useRef([])
+  const timerRef   = useRef(null)
+  const startRef   = useRef(null)
+
+  useEffect(() => {
+    if (activeStage === prevRef.current) return
+    prevRef.current = activeStage
+
+    const q = queueRef.current
+    if (q.length === 0 || q[q.length - 1] !== activeStage) q.push(activeStage)
+    if (timerRef.current !== null) return
+
+    const elapsed = startRef.current != null ? Date.now() - startRef.current : MIN_STAGE_MS
+    const wait    = Math.max(0, MIN_STAGE_MS - elapsed)
+
+    function flush() {
+      timerRef.current = null
+      if (q.length === 0) return
+      const next = q.shift()
+      setDisplayed(next)
+      startRef.current = Date.now()
+      if (q.length > 0) timerRef.current = setTimeout(flush, MIN_STAGE_MS)
+    }
+
+    timerRef.current = setTimeout(flush, wait)
+  }, [activeStage])
+
+  useEffect(() => () => clearTimeout(timerRef.current), [])
+
+  return displayed
+}
 
 const STAGES = [
   { id: 'parsing',    label: 'Parsing',              hint: 'Extracting COBOL structure' },
@@ -12,7 +52,8 @@ function stageIndex(id) {
 }
 
 export function AnalysisPipeline({ activeStage, aiStep, message, failed }) {
-  const activeIdx = activeStage ? stageIndex(activeStage) : 0
+  const displayed = useMinStageDuration(activeStage)
+  const activeIdx = displayed ? stageIndex(displayed) : 0
 
   return (
     <div className="space-y-3 py-1">
@@ -78,7 +119,8 @@ export function AnalysisPipeline({ activeStage, aiStep, message, failed }) {
 }
 
 export function MiniPipeline({ activeStage, failed }) {
-  const activeIdx = activeStage ? stageIndex(activeStage) : 0
+  const displayed = useMinStageDuration(activeStage)
+  const activeIdx = displayed ? stageIndex(displayed) : 0
 
   return (
     <div className="flex items-center gap-1 mt-1.5">

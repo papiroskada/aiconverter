@@ -12,11 +12,13 @@ export function verifyAccessToken(token) {
 
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization
-  if (!header?.startsWith('Bearer ')) {
+  // EventSource cannot send headers — allow token via query param for SSE endpoints
+  const token = header?.startsWith('Bearer ') ? header.slice(7) : req.query.token
+  if (!token) {
     return res.status(401).json({ error: 'Authentication required' })
   }
   try {
-    req.user = verifyAccessToken(header.slice(7))
+    req.user = verifyAccessToken(token)
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' })

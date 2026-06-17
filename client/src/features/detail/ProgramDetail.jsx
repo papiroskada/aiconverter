@@ -61,7 +61,6 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
       setProgram(p)
       setUserFlags(p?.userFlags ?? {})
       if (p?.status === 'analyzing') {
-        setLocalStage('parsing')
         setSseActive(true)
       }
     }).finally(() => setLoading(false))
@@ -69,7 +68,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
 
   useSSE(sseActive ? programId : null, (event, data) => {
     if (event === 'progress') {
-      if (data.stage === 'parsing') {
+      if (data.stage === 'analysis') {
         setLocalStage('structural')
         setLocalMessage(null)
       } else if (data.stage === 'step') {
