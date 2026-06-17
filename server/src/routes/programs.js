@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import multer from 'multer'
 import { getAllPrograms, findProgramById } from '../models/programs.js'
-import { getAllEdges, getEdgesForProgram } from '../models/programEdges.js'
+import { getEdgesForUser, getEdgesForProgram } from '../models/programEdges.js'
 import { getAnalysisByProgramId, updateFlag, patchEntryPoints, saveGeneratedCode, getGeneratedCode } from '../models/programAnalysis.js'
 import { upsertFlag, deleteFlag, getFlagsForProgram } from '../models/programFlags.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
@@ -25,7 +25,6 @@ const upload = multer({
 
 import pool from '../db/client.js'
 
-// SSE emitter registry: programId → Set of response objects
 const sseEmitters = new Map()
 
 // POST /api/programs/program-types
@@ -89,7 +88,7 @@ router.post('/application/:appId/generate', async (req, res, next) => {
 // GET /api/programs
 router.get('/', async (req, res, next) => {
   try {
-    const [programs, edges] = await Promise.all([getAllPrograms(req.user.sub), getAllEdges()])
+    const [programs, edges] = await Promise.all([getAllPrograms(req.user.sub), getEdgesForUser(req.user.sub)])
     res.json({ programs, edges })
   } catch (err) {
     next(err)

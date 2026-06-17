@@ -26,6 +26,26 @@ export async function getAllEdges() {
   return rows
 }
 
+export async function getEdgesForUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT pe.from_program_id AS "from", pe.to_program_id AS "to", pe.to_program_name AS to_name
+     FROM program_edges pe
+     JOIN programs fp ON fp.id = pe.from_program_id
+     LEFT JOIN applications a ON a.id = fp.application_id
+     WHERE (
+       fp.application_id IS NULL
+       OR a.created_by IS NULL
+       OR a.created_by = $1
+       OR EXISTS (
+         SELECT 1 FROM application_members am
+         WHERE am.application_id = fp.application_id AND am.user_id = $1
+       )
+     )`,
+    [userId]
+  )
+  return rows
+}
+
 export async function getEdgesForApplication(applicationId) {
   const { rows } = await pool.query(
     `SELECT pe.from_program_id AS "from", pe.to_program_id AS "to", pe.to_program_name AS to_name
