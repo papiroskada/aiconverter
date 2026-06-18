@@ -27,14 +27,16 @@ function TokenStatsTab() {
   if (!stats) return null
 
   const totalAll = stats.totalIn + stats.totalOut
+  const fmtCost = n => `$${n.toFixed(4)}`
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {[
           { label: 'Total tokens in', value: stats.totalIn.toLocaleString() },
           { label: 'Total tokens out', value: stats.totalOut.toLocaleString() },
           { label: 'Total tokens used', value: totalAll.toLocaleString() },
+          { label: 'Estimated cost', value: fmtCost(stats.totalCost ?? 0) },
         ].map(({ label, value }) => (
           <div key={label} className="rounded-lg border border-border p-4">
             <p className="text-xs text-muted-foreground">{label}</p>
@@ -50,11 +52,12 @@ function TokenStatsTab() {
             <TableHead className="text-right">Tokens in</TableHead>
             <TableHead className="text-right">Tokens out</TableHead>
             <TableHead className="text-right">Total</TableHead>
+            <TableHead className="text-right">Est. cost</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {stats.users.length === 0 && (
-            <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-12">No usage data yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-12">No usage data yet.</TableCell></TableRow>
           )}
           {stats.users.map(u => (
             <TableRow key={u.id}>
@@ -67,6 +70,7 @@ function TokenStatsTab() {
               <TableCell className="text-right font-mono text-sm">{u.tokens_in.toLocaleString()}</TableCell>
               <TableCell className="text-right font-mono text-sm">{u.tokens_out.toLocaleString()}</TableCell>
               <TableCell className="text-right font-mono text-sm font-medium">{u.total.toLocaleString()}</TableCell>
+              <TableCell className="text-right font-mono text-sm text-muted-foreground">{fmtCost(u.cost ?? 0)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
