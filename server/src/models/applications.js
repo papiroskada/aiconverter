@@ -54,6 +54,7 @@ export async function getApplicationPrograms(applicationId) {
     SELECT
       p.id, p.name, p.status,
       COALESCE(jsonb_array_length(pa.entry_points), 0)::int AS entry_point_count,
+      (pa.generated_code IS NOT NULL) AS code_generated,
       (
         SELECT COALESCE(jsonb_agg(row_to_json(x)), '[]'::jsonb)
         FROM (

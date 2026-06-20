@@ -1,5 +1,6 @@
 import { getCallsFromProgram } from '../../models/programCalls.js'
-import { getAnalysisByProgramId } from '../../models/programAnalysis.js'
+import { getAnalysisByProgramId, getGeneratedCode, saveGeneratedCode } from '../../models/programAnalysis.js'
+import { findProgramById } from '../../models/programs.js'
 import { loadProgramData } from './contextBuilders.js'
 import { toPascal, assembleCode } from './utils.js'
 import { generateProgramTypes } from './typeGeneration.js'
@@ -71,17 +72,26 @@ async function wireInterProgramCalls(results) {
       const funcName = `execute${toPascal(dep.program)}`
       const pattern = new RegExp(`callProgram\\(['"]${dep.program}['"],\\s*`, 'g')
 
-      r.dispatcher = r.dispatcher?.replace(pattern, `${funcName}(`)
-      r.functions = r.functions?.map(f => ({ ...f, code: f.code.replace(pattern, `${funcName}(`) }))
+      if (r.fromCache) {
+        // Cached results only have the final assembled code — patch it directly
+        r.code = r.code.replace(pattern, `${funcName}(`)
+        const importLine = `import { execute as ${funcName} } from './${dep.program}.js'`
+        if (!r.code.includes(importLine)) {
+          r.code = importLine + '\n' + r.code
+        }
+      } else {
+        r.dispatcher = r.dispatcher?.replace(pattern, `${funcName}(`)
+        r.functions = r.functions?.map(f => ({ ...f, code: f.code.replace(pattern, `${funcName}(`) }))
 
-      const importLine = `import { execute as ${funcName} } from './${dep.program}.js'`
-      const typeImportLine = `import type { ${toPascal(dep.program)}Input } from './types.js'`
-      if (!(r.imports ?? []).includes(importLine)) {
-        r.imports = [typeImportLine, importLine, ...(r.imports ?? [])]
+        const importLine = `import { execute as ${funcName} } from './${dep.program}.js'`
+        const typeImportLine = `import type { ${toPascal(dep.program)}Input } from './types.js'`
+        if (!(r.imports ?? []).includes(importLine)) {
+          r.imports = [typeImportLine, importLine, ...(r.imports ?? [])]
+        }
       }
     }
 
-    r.code = assembleCode(r)
+    if (!r.fromCache) r.code = assembleCode(r)
   }
 }
 
@@ -93,6 +103,44 @@ export async function generateApplication(programIds) {
     try {
       const result = await generateProgram(programId)
       results.push({ programId, status: 'ok', ...result })
+    } catch (err) {
+      results.push({ programId, status: 'error', error: err.message })
+    }
+  }
+
+  await wireInterProgramCalls(results)
+
+  return { order, results }
+}
+
+export async function generateApplicationCached(programIds) {
+  const order = await buildGenerationOrder(programIds)
+  const results = []
+
+  for (const programId of order) {
+    try {
+      const cached = await getGeneratedCode(programId)
+      if (cached) {
+        const program = await findProgramById(programId)
+        results.push({
+          programId,
+          status: 'ok',
+          fromCache: true,
+          programName: program.name,
+          language: cached.generated_language ?? 'typescript',
+          code: cached.generated_code,
+          tests: cached.generated_tests ?? null,
+        })
+      } else {
+        const result = await generateProgram(programId)
+        saveGeneratedCode(programId, {
+          code: result.code,
+          tests: result.tests ?? null,
+          language: result.language ?? 'typescript',
+          notes: Array.isArray(result.notes) ? result.notes.join(' · ') : (result.notes ?? null),
+        }).catch(() => {})
+        results.push({ programId, status: 'ok', fromCache: false, ...result })
+      }
     } catch (err) {
       results.push({ programId, status: 'error', error: err.message })
     }
@@ -142,7 +190,7 @@ function generateIndex(results) {
 }
 
 export async function generateProject(programIds, { includeTests = false } = {}) {
-  const { order, results } = await generateApplication(programIds)
+  const { order, results } = await generateApplicationCached(programIds)
 
   const language = results.find(r => r.status === 'ok')?.language ?? 'typescript'
   const ext = language === 'typescript' ? 'ts' : 'js'

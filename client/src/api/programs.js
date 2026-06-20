@@ -122,6 +122,15 @@ export async function generateApplicationCode(appId) {
   return res.json()
 }
 
+export async function generateTests(id) {
+  const res = await apiJson(`${BASE}/${id}/generate-tests`, { method: 'POST' })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new Error(b?.error || 'Test generation failed')
+  }
+  return res.json()
+}
+
 export async function fetchCallers(name) {
   const res = await apiFetch(`${BASE}/callers/${encodeURIComponent(name)}`)
   if (!res.ok) throw new Error('Failed to fetch callers')

@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Play, Zap, Trash2, RotateCcw, Upload, MoreHorizontal,
-  ChevronLeft, Loader2, X, Download, Users
+  ChevronLeft, Loader2, X, Download, Users, CheckCircle2, FlaskConical, Copy
 } from 'lucide-react'
 import { fetchApplication, startApplicationAnalysis, cancelApplication, deleteApplication, fetchApplicationMembers, addApplicationMember, removeApplicationMember } from '@/api/applications.js'
-import { deleteProgram, triggerReanalyze, generateProjectFiles } from '@/api/programs.js'
+import { deleteProgram, triggerReanalyze, generateProjectFiles, generateTests } from '@/api/programs.js'
 import { useAuth } from '@/auth/AuthContext.jsx'
 import { useAppSSE } from '@/hooks/useAppSSE.js'
 import { Button } from '@/components/ui/button'
@@ -20,7 +20,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import UploadDialog from '@/features/programs/UploadDialog.jsx'
 import ProgramDetail from '@/features/detail/ProgramDetail.jsx'
-import { MiniPipeline } from '@/components/AnalysisPipeline.jsx'
+
 import AppCodeTab from '@/features/code/AppCodeTab.jsx'
 
 const FLAG_CONFIG = {
@@ -29,19 +29,35 @@ const FLAG_CONFIG = {
   deprecated: { icon: '✕', cls: 'text-red-400   border-red-400/30   bg-red-950/40'   },
 }
 
-const STATUS_CONFIG = {
-  analyzed:  { label: 'Analyzed',  dot: 'bg-green-500',              badge: 'default' },
-  analyzing: { label: 'Analyzing', dot: 'bg-blue-400 animate-pulse', badge: 'secondary' },
-  failed:    { label: 'Failed',    dot: 'bg-red-500',                badge: 'destructive' },
-  pending:   { label: 'Pending',   dot: 'bg-slate-500',              badge: 'outline' },
-}
-
-function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending
+function StatusChip({ status }) {
+  if (status === 'analyzed') {
+    return (
+      <Badge variant="outline" className="gap-1.5 text-xs font-normal px-2 py-0.5 border-green-500/40 bg-green-950/40 text-green-400">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-green-500" />
+        Analyzed
+      </Badge>
+    )
+  }
+  if (status === 'analyzing') {
+    return (
+      <Badge variant="outline" className="gap-1.5 text-xs font-normal px-2 py-0.5 border-blue-500/40 bg-blue-950/40 text-blue-400">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-blue-400 animate-pulse" />
+        Parsing
+      </Badge>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <Badge variant="outline" className="gap-1.5 text-xs font-normal px-2 py-0.5 border-red-500/40 bg-red-950/40 text-red-400">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-red-500" />
+        Failed
+      </Badge>
+    )
+  }
   return (
-    <Badge variant={cfg.badge} className="gap-1.5 text-xs font-normal">
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-      {cfg.label}
+    <Badge variant="outline" className="gap-1.5 text-xs font-normal px-2 py-0.5 border-border text-muted-foreground/50">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-muted-foreground/30" />
+      Pending
     </Badge>
   )
 }
@@ -125,19 +141,25 @@ export default function ProjectDetailPage() {
     }
   }, [shareOpen, appId])
 
+  const STAGE_PRIORITY = { parsing: 0, structural: 1, ai: 2 }
+
   useAppSSE(analyzing ? appId : null, (event, data) => {
     if (event === 'progress' && data.programId) {
       if (data.stage === 'parsing') {
         setStepProgress(prev => {
           const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'parsing', message: data.message ?? null })
+          const existing = m.get(data.programId) ?? {}
+          if ((STAGE_PRIORITY[existing.stage] ?? -1) >= STAGE_PRIORITY.parsing) return prev
+          m.set(data.programId, { ...existing, stage: 'parsing', message: data.message ?? null })
           return m
         })
       }
       if (data.stage === 'analysis') {
         setStepProgress(prev => {
           const m = new Map(prev)
-          m.set(data.programId, { ...(m.get(data.programId) ?? {}), stage: 'structural', message: data.message ?? null })
+          const existing = m.get(data.programId) ?? {}
+          if ((STAGE_PRIORITY[existing.stage] ?? -1) >= STAGE_PRIORITY.structural) return prev
+          m.set(data.programId, { ...existing, stage: 'structural', message: data.message ?? null })
           return m
         })
       }
@@ -210,10 +232,23 @@ export default function ProjectDetailPage() {
     await triggerReanalyze(program.id)
   }
 
+  const [generatingTests, setGeneratingTests] = useState(null)
+  const [testDialog, setTestDialog] = useState(null)
+
+  async function handleGenerateTests(program) {
+    setGeneratingTests(program.id)
+    try {
+      const result = await generateTests(program.id)
+      setTestDialog({ programName: result.programName, testFile: result.testFile })
+    } finally {
+      setGeneratingTests(null)
+    }
+  }
+
   async function handleDownloadZip() {
     setZipping(true)
     try {
-      const { files, warnings } = await generateProjectFiles(appId)
+      const { files, warnings } = await generateProjectFiles(appId, { includeTests: true })
       const { default: JSZip } = await import('jszip')
       const zip = new JSZip()
       for (const f of files) zip.file(f.path, f.content)
@@ -392,7 +427,7 @@ export default function ProjectDetailPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Entry points</TableHead>
+              <TableHead>Code Generated</TableHead>
               <TableHead>Flags</TableHead>
               {canEdit && <TableHead className="w-12" />}
             </TableRow>
@@ -419,13 +454,8 @@ export default function ProjectDetailPage() {
                   <TableCell className="font-mono font-medium">{program.name}</TableCell>
                   <TableCell>
                     <div className="space-y-1">
-                      <StatusBadge status={program.status} />
-                      {program.status === 'analyzing' && (
-                        <MiniPipeline
-                          activeStage={sp?.stage ?? 'parsing'}
-                          failed={false}
-                        />
-                      )}
+                      <StatusChip status={program.status} />
+                     
                       {sp?.message && (
                         <p className="text-xs text-muted-foreground max-w-[220px] truncate">{sp.message}</p>
                       )}
@@ -434,8 +464,33 @@ export default function ProjectDetailPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {program.entry_point_count > 0 ? program.entry_point_count : '—'}
+                  <TableCell onClick={e => e.stopPropagation()}>
+                    {program.code_generated
+                      ? (
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="gap-1.5 text-xs font-normal border-green-500/40 bg-green-950/40 text-green-400">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Generated
+                          </Badge>
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:text-foreground shrink-0"
+                              title="Generate tests"
+                              disabled={generatingTests === program.id}
+                              onClick={() => handleGenerateTests(program)}
+                            >
+                              {generatingTests === program.id
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <FlaskConical className="h-3 w-3" />
+                              }
+                            </Button>
+                          )}
+                        </div>
+                      )
+                      : <span className="text-muted-foreground/40 text-sm">—</span>
+                    }
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
@@ -511,6 +566,45 @@ export default function ProjectDetailPage() {
         applicationId={appId}
         onUploaded={load}
       />
+
+      <Dialog open={!!testDialog} onOpenChange={open => { if (!open) setTestDialog(null) }}>
+        <DialogContent className="flex flex-col gap-0 p-0 sm:max-w-3xl max-h-[85vh]">
+          <DialogHeader className="px-5 pt-5 pb-3 border-b border-border shrink-0">
+            <DialogTitle className="font-mono text-sm">
+              {testDialog?.programName}.test.ts
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto">
+            <pre className="text-xs font-mono leading-relaxed p-5 whitespace-pre-wrap break-words">
+              {testDialog?.testFile}
+            </pre>
+          </div>
+          <div className="flex items-center gap-2 px-5 py-3 border-t border-border shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigator.clipboard.writeText(testDialog?.testFile ?? '')}
+            >
+              <Copy className="mr-2 h-3.5 w-3.5" />Copy
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const blob = new Blob([testDialog.testFile], { type: 'text/plain' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${testDialog.programName}.test.ts`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              <Download className="mr-2 h-3.5 w-3.5" />Download
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <DeleteDialog
         open={deleteAppOpen}

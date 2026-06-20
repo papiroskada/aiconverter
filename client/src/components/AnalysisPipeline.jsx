@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Check, Loader2, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const MIN_STAGE_MS = 15000
+const MIN_STAGE_MS = 5000
 
 // Ensures each stage is visible for at least MIN_STAGE_MS before transitioning.
 // Queues rapid transitions and plays them sequentially.
@@ -11,7 +11,7 @@ function useMinStageDuration(activeStage) {
   const prevRef    = useRef(activeStage)
   const queueRef   = useRef([])
   const timerRef   = useRef(null)
-  const startRef   = useRef(null)
+  const startRef   = useRef(Date.now())
 
   useEffect(() => {
     if (activeStage === prevRef.current) return
@@ -118,13 +118,15 @@ export function AnalysisPipeline({ activeStage, aiStep, message, failed }) {
   )
 }
 
+const MINI_STAGES = STAGES.filter(s => s.id !== 'parsing')
+
 export function MiniPipeline({ activeStage, failed }) {
   const displayed = useMinStageDuration(activeStage)
-  const activeIdx = displayed ? stageIndex(displayed) : 0
+  const activeIdx = Math.max(0, MINI_STAGES.findIndex(s => s.id === displayed))
 
   return (
     <div className="flex items-center gap-1 mt-1.5">
-      {STAGES.map((stage, i) => {
+      {MINI_STAGES.map((stage, i) => {
         const isDone   = i < activeIdx
         const isActive = i === activeIdx && !failed
         const isFailed = i === activeIdx && failed
@@ -141,16 +143,14 @@ export function MiniPipeline({ activeStage, failed }) {
                 !isDone && !isActive && !isFailed && 'bg-border',
               )}
             />
-            {i < STAGES.length - 1 && (
+            {i < MINI_STAGES.length - 1 && (
               <div className={cn('w-4 h-px', isDone ? 'bg-green-500/40' : 'bg-border')} />
             )}
           </div>
         )
       })}
       <span className="text-xs text-muted-foreground ml-1.5">
-        {failed
-          ? STAGES[Math.min(activeIdx, STAGES.length - 1)]?.label
-          : STAGES[Math.min(activeIdx, STAGES.length - 1)]?.label}
+        {MINI_STAGES[Math.min(activeIdx, MINI_STAGES.length - 1)]?.label}
       </span>
     </div>
   )

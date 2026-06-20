@@ -45,6 +45,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const doneRef = useRef(false)
+  const stageRef = useRef(null)
   const onReanalyzedRef = useRef(onReanalyzed)
   useEffect(() => { onReanalyzedRef.current = onReanalyzed }, [onReanalyzed])
 
@@ -54,6 +55,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
     setLoading(true)
     setProgram(null)
     doneRef.current = false
+    stageRef.current = null
     setLocalStage(null)
     setLocalAiStep(null)
     setLocalMessage(null)
@@ -66,12 +68,18 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
     }).finally(() => setLoading(false))
   }, [programId])
 
+  const STAGE_PRIORITY = { parsing: 0, structural: 1, ai: 2 }
+
   useSSE(sseActive ? programId : null, (event, data) => {
     if (event === 'progress') {
       if (data.stage === 'analysis') {
-        setLocalStage('structural')
-        setLocalMessage(null)
+        if ((STAGE_PRIORITY[stageRef.current] ?? -1) < STAGE_PRIORITY.structural) {
+          stageRef.current = 'structural'
+          setLocalStage('structural')
+          setLocalMessage(null)
+        }
       } else if (data.stage === 'step') {
+        stageRef.current = 'ai'
         setLocalStage('ai')
         setLocalAiStep({ step: data.step, total: data.total })
       }
@@ -80,6 +88,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
     if (event === 'done' || event === 'failed' || event === 'cancelled') {
       if (doneRef.current) return
       doneRef.current = true
+      stageRef.current = null
       setSseActive(false)
       setLocalStage(null)
       setLocalAiStep(null)
@@ -92,6 +101,7 @@ export default function ProgramDetail({ programId, applicationId, stepProgress =
 
   async function handleReanalyze() {
     doneRef.current = false
+    stageRef.current = 'parsing'
     setReanalyzing(true)
     setSseActive(true)
     setLocalStage('parsing')
