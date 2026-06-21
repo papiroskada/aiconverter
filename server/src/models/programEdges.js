@@ -33,9 +33,7 @@ export async function getEdgesForUser(userId) {
      JOIN programs fp ON fp.id = pe.from_program_id
      LEFT JOIN applications a ON a.id = fp.application_id
      WHERE (
-       fp.application_id IS NULL
-       OR a.created_by IS NULL
-       OR a.created_by = $1
+       a.created_by = $1
        OR EXISTS (
          SELECT 1 FROM application_members am
          WHERE am.application_id = fp.application_id AND am.user_id = $1

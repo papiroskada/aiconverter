@@ -18,6 +18,18 @@ export async function findProgramByName(name) {
   return rows[0] || null
 }
 
+export async function findProgramByNameInApp(name, applicationId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM programs
+     WHERE name = $1
+     AND (application_id = $2 OR application_id IS NULL)
+     ORDER BY CASE WHEN application_id = $2 THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [name, applicationId]
+  )
+  return rows[0] || null
+}
+
 export async function findProgramById(id) {
   const { rows } = await pool.query('SELECT * FROM programs WHERE id = $1', [id])
   return rows[0] || null
@@ -87,12 +99,26 @@ export async function getAllPrograms(userId) {
   const { rows } = await pool.query(
     GRAPH_SELECT + `
     WHERE (
-      p.application_id IS NULL
-      OR a.created_by  IS NULL
-      OR a.created_by   = $1
+      a.created_by = $1
       OR EXISTS (
         SELECT 1 FROM application_members am
         WHERE am.application_id = p.application_id AND am.user_id = $1
+      )
+      OR (
+        p.application_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM program_edges pe
+          JOIN programs src ON src.id = pe.from_program_id
+          LEFT JOIN applications src_a ON src_a.id = src.application_id
+          WHERE pe.to_program_id = p.id
+          AND (
+            src_a.created_by = $1
+            OR EXISTS (
+              SELECT 1 FROM application_members am2
+              WHERE am2.application_id = src.application_id AND am2.user_id = $1
+            )
+          )
+        )
       )
     )
     ORDER BY p.created_at ASC`,

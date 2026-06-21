@@ -73,22 +73,29 @@ export function usePrograms() {
   const [nodes, setNodes] = useState([])
   const [edges, setEdges] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   const refresh = useCallback(async () => {
-    const { programs, edges: rawEdges } = await fetchGraph()
-    const newNodes = buildNodes(programs)
-    const newEdges = buildEdges(rawEdges, programs)
-    const layoutedNodes = applyDagreLayout(newNodes, newEdges)
+    try {
+      const { programs, edges: rawEdges } = await fetchGraph()
+      const newNodes = buildNodes(programs)
+      const newEdges = buildEdges(rawEdges, programs)
+      const layoutedNodes = applyDagreLayout(newNodes, newEdges)
 
-    setNodes(prev => {
-      const posMap = new Map(prev.map(n => [n.id, n.position]))
-      return layoutedNodes.map(n => ({
-        ...n,
-        position: posMap.get(n.id) || n.position,
-      }))
-    })
-    setEdges(newEdges)
-    setLoading(false)
+      setNodes(prev => {
+        const posMap = new Map(prev.map(n => [n.id, n.position]))
+        return layoutedNodes.map(n => ({
+          ...n,
+          position: posMap.get(n.id) || n.position,
+        }))
+      })
+      setEdges(newEdges)
+      setError(null)
+    } catch (err) {
+      setError(err.message ?? 'Failed to load graph')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
@@ -109,5 +116,5 @@ export function usePrograms() {
     setNodes(prev => applyNodeChanges(changes, prev))
   }, [])
 
-  return { nodes, edges, loading, refresh, markAnalyzing, markAnalyzed, onNodesChange }
+  return { nodes, edges, loading, error, refresh, markAnalyzing, markAnalyzed, onNodesChange }
 }

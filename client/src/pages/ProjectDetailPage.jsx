@@ -470,7 +470,7 @@ export default function ProjectDetailPage() {
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="gap-1.5 text-xs font-normal border-green-500/40 bg-green-950/40 text-green-400">
                             <CheckCircle2 className="w-3 h-3" />
-                            Generated
+                            Done
                           </Badge>
                           {canEdit && (
                             <Button

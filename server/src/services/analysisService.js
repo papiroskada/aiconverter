@@ -6,7 +6,7 @@ import { getProvider } from '../ai/providers/base.js'
 import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
-import { createProgram, updateProgramStatus, findProgramByName, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms, saveStructuralCache } from '../models/programs.js'
+import { createProgram, updateProgramStatus, findProgramByName, findProgramByNameInApp, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms, saveStructuralCache } from '../models/programs.js'
 import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
@@ -67,7 +67,9 @@ async function runAnalysisCore(programId, programName, cobolText, savedChunks, e
     for (const call of (structuralCache?.calls ?? [])) {
       const calleeName = call.program?.toUpperCase()
       if (!calleeName) continue
-      const target = await findProgramByName(calleeName)
+      const target = program.application_id
+        ? await findProgramByNameInApp(calleeName, program.application_id)
+        : await findProgramByName(calleeName)
       await upsertCall({
         caller_program_id: programId,
         callee_name: calleeName,

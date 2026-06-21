@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// Mock dependencies before importing the module under test
 const programsModel = {
-  findProgramByName: vi.fn(),
+  findProgramByNameInApp: vi.fn(),
+  findProgramById: vi.fn(),
   createProgram: vi.fn(),
   updateProgramStatus: vi.fn(),
 }
@@ -24,17 +24,18 @@ describe('updateGraphAfterAnalysis', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     programsModel.updateProgramStatus.mockResolvedValue({})
+    programsModel.findProgramById.mockResolvedValue({ id: 'from-id', application_id: 'app-1' })
     callsModel.backfillCallTargets.mockResolvedValue({})
   })
 
   it('creates a pending program node for an unknown program name', async () => {
-    programsModel.findProgramByName.mockResolvedValue(null)
+    programsModel.findProgramByNameInApp.mockResolvedValue(null)
     programsModel.createProgram.mockResolvedValue({ id: 'new-id' })
     edgesModel.upsertEdge.mockResolvedValue({})
 
     await updateGraphAfterAnalysis('from-id', [{ program: 'NEW-PROG', using: 'WS-PARAM' }])
 
-    expect(programsModel.createProgram).toHaveBeenCalledWith({ name: 'NEW-PROG', status: 'pending' })
+    expect(programsModel.createProgram).toHaveBeenCalledWith({ name: 'NEW-PROG', status: 'pending', application_id: 'app-1' })
     expect(edgesModel.upsertEdge).toHaveBeenCalledWith({
       from_program_id: 'from-id',
       to_program_name: 'NEW-PROG',
@@ -43,13 +44,11 @@ describe('updateGraphAfterAnalysis', () => {
     })
   })
 
-  it('uses existing program id when program already exists', async () => {
-    programsModel.findProgramByName.mockResolvedValue({ id: 'existing-id', name: 'PROG' })
+  it('uses existing program id when program already exists in the same app', async () => {
+    programsModel.findProgramByNameInApp.mockResolvedValue({ id: 'existing-id', name: 'PROG' })
     edgesModel.upsertEdge.mockResolvedValue({})
 
-    await updateGraphAfterAnalysis('prog-id', [
-      { program: 'PROG', using: '' }
-    ])
+    await updateGraphAfterAnalysis('prog-id', [{ program: 'PROG', using: '' }])
 
     expect(programsModel.createProgram).not.toHaveBeenCalled()
     expect(edgesModel.upsertEdge).toHaveBeenCalledWith({
@@ -61,12 +60,10 @@ describe('updateGraphAfterAnalysis', () => {
   })
 
   it('calls updateProgramStatus with analyzed after processing all calls', async () => {
-    programsModel.findProgramByName.mockResolvedValue({ id: 'existing-id', name: 'PROG' })
+    programsModel.findProgramByNameInApp.mockResolvedValue({ id: 'existing-id', name: 'PROG' })
     edgesModel.upsertEdge.mockResolvedValue({})
 
-    await updateGraphAfterAnalysis('prog-id', [
-      { program: 'PROG', using: '' }
-    ])
+    await updateGraphAfterAnalysis('prog-id', [{ program: 'PROG', using: '' }])
 
     expect(programsModel.updateProgramStatus).toHaveBeenCalledWith('prog-id', 'analyzed', { analyzed_at: true })
   })
@@ -77,23 +74,32 @@ describe('updateGraphAfterAnalysis', () => {
       { using: 'Y' },
     ])
 
-    expect(programsModel.findProgramByName).not.toHaveBeenCalled()
+    expect(programsModel.findProgramByNameInApp).not.toHaveBeenCalled()
     expect(edgesModel.upsertEdge).not.toHaveBeenCalled()
   })
 
   it('includes all calls — no is_system_call filter', async () => {
-    programsModel.findProgramByName.mockResolvedValue(null)
+    programsModel.findProgramByNameInApp.mockResolvedValue(null)
     programsModel.createProgram.mockResolvedValue({ id: 'sys-id' })
     edgesModel.upsertEdge.mockResolvedValue({})
 
-    // Call with no is_system_call field — should still be processed
     await updateGraphAfterAnalysis('prog-id', [
       { program: 'c_writelnkarea', using: 'PGM-NM' },
     ])
 
-    // name is normalized to uppercase before lookup
-    expect(programsModel.findProgramByName).toHaveBeenCalledWith('C_WRITELNKAREA')
+    expect(programsModel.findProgramByNameInApp).toHaveBeenCalledWith('C_WRITELNKAREA', 'app-1')
     expect(edgesModel.upsertEdge).toHaveBeenCalled()
+  })
+
+  it('creates phantom with null application_id when calling program has no application', async () => {
+    programsModel.findProgramById.mockResolvedValue({ id: 'from-id', application_id: null })
+    programsModel.createProgram.mockResolvedValue({ id: 'new-id' })
+    edgesModel.upsertEdge.mockResolvedValue({})
+
+    await updateGraphAfterAnalysis('from-id', [{ program: 'EXT', using: '' }])
+
+    expect(programsModel.findProgramByNameInApp).not.toHaveBeenCalled()
+    expect(programsModel.createProgram).toHaveBeenCalledWith({ name: 'EXT', status: 'pending', application_id: null })
   })
 })
 
