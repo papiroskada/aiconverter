@@ -99,9 +99,7 @@ export function generateTestSuite(program, analysis, structuralCache) {
 
   const lines = [
     `import { vi, describe, test, expect, beforeEach } from 'vitest'`,
-    `vi.mock('../db.js', () => ({ db: { select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn() } }))`,
     `vi.mock('../callProgram.js', () => ({ callProgram: vi.fn() }))`,
-    `import { db } from '../db.js'`,
     `import { ${dispatcherFn} } from '../${programName}.js'`,
     ``,
     `describe('${programName}', () => {`,

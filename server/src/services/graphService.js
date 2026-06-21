@@ -32,6 +32,7 @@ export async function updateGraphAfterAnalysis(fromProgramId, externalCalls) {
 }
 
 export async function backfillEdgesForNewProgram(program) {
-  await backfillPhantomEdges(program.name, program.id)
-  await backfillCallTargets(program.name, program.id)
+  const appId = program.application_id ?? null
+  await backfillPhantomEdges(program.name, program.id, appId)
+  await backfillCallTargets(program.name, program.id, appId)
 }

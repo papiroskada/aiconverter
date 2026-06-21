@@ -6,7 +6,7 @@ import { getProvider } from '../ai/providers/base.js'
 import { runAnalysis } from '../ai/orchestrator.js'
 import { logger } from '../logger.js'
 import { getSettings } from '../models/settings.js'
-import { createProgram, updateProgramStatus, findProgramByName, findProgramByNameInApp, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms, saveStructuralCache } from '../models/programs.js'
+import { createProgram, updateProgramStatus, findProgramByName, findProgramByNameInApp, findProgramForUpload, findProgramById, updateFilePath, updateProgramApplicationId, deleteProgramById, deleteOrphanedPhantoms, saveStructuralCache } from '../models/programs.js'
 import { upsertBusinessAnalysis } from '../models/programAnalysis.js'
 import { insertChunks, getChunksByProgramId } from '../models/programChunks.js'
 import { backfillEdgesForNewProgram, updateGraphAfterAnalysis } from './graphService.js'
@@ -113,7 +113,7 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
   const cobolText = preprocessCobol(sourceText)
   const programName = file.originalname.replace(/\.(cbl|cob)$/i, '').toUpperCase()
 
-  let program = await findProgramByName(programName)
+  let program = await findProgramForUpload(programName, applicationId)
   if (!program) {
     program = await createProgram({
       name: programName,
@@ -127,7 +127,7 @@ export async function uploadAndStartAnalysis(file, sseEmitters, applicationId = 
       throw Object.assign(new Error('Already analyzing'), { status: 409 })
     }
     await updateProgramStatus(program.id, 'analyzing')
-    if (applicationId) {
+    if (applicationId && !program.application_id) {
       await updateProgramApplicationId(program.id, applicationId)
     }
   }

@@ -9,13 +9,28 @@ export async function upsertEdge({ from_program_id, to_program_name, to_program_
   )
 }
 
-export async function backfillPhantomEdges(program_name, program_id) {
-  await pool.query(
-    `UPDATE program_edges
-     SET to_program_id = $1
-     WHERE to_program_name = $2 AND to_program_id IS NULL`,
-    [program_id, program_name]
-  )
+export async function backfillPhantomEdges(program_name, program_id, application_id = null) {
+  if (application_id) {
+    // Only backfill edges whose source is in the same application (or is itself a phantom).
+    // This prevents a newly uploaded program from hijacking edges in other users' graphs.
+    await pool.query(
+      `UPDATE program_edges pe
+       SET to_program_id = $1
+       FROM programs fp
+       WHERE pe.from_program_id = fp.id
+         AND pe.to_program_name = $2
+         AND pe.to_program_id IS NULL
+         AND (fp.application_id = $3 OR fp.application_id IS NULL)`,
+      [program_id, program_name, application_id]
+    )
+  } else {
+    await pool.query(
+      `UPDATE program_edges
+       SET to_program_id = $1
+       WHERE to_program_name = $2 AND to_program_id IS NULL`,
+      [program_id, program_name]
+    )
+  }
 }
 
 export async function getAllEdges() {

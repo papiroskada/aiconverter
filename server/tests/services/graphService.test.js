@@ -104,14 +104,15 @@ describe('updateGraphAfterAnalysis', () => {
 })
 
 describe('backfillEdgesForNewProgram', () => {
-  it('calls backfillPhantomEdges with program name and id', async () => {
-    await backfillEdgesForNewProgram({ id: 'p-id', name: 'NEWPROG' })
-    expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id')
+  it('passes application_id to backfillPhantomEdges and backfillCallTargets', async () => {
+    await backfillEdgesForNewProgram({ id: 'p-id', name: 'NEWPROG', application_id: 'app-1' })
+    expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id', 'app-1')
+    expect(callsModel.backfillCallTargets).toHaveBeenCalledWith('NEWPROG', 'p-id', 'app-1')
   })
 
-  it('backfillEdgesForNewProgram also calls backfillCallTargets', async () => {
+  it('passes null application_id when program has no application', async () => {
     await backfillEdgesForNewProgram({ id: 'p-id', name: 'NEWPROG' })
-    expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id')
-    expect(callsModel.backfillCallTargets).toHaveBeenCalledWith('NEWPROG', 'p-id')
+    expect(edgesModel.backfillPhantomEdges).toHaveBeenCalledWith('NEWPROG', 'p-id', null)
+    expect(callsModel.backfillCallTargets).toHaveBeenCalledWith('NEWPROG', 'p-id', null)
   })
 })

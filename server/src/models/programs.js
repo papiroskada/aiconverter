@@ -30,6 +30,29 @@ export async function findProgramByNameInApp(name, applicationId) {
   return rows[0] || null
 }
 
+// Used during file upload: finds an existing record to reuse (same app or adoptable phantom).
+// Never returns a program from a different application to prevent data contamination.
+export async function findProgramForUpload(name, applicationId) {
+  if (!applicationId) {
+    // Legacy single-file upload with no application context — global search.
+    return findProgramByName(name)
+  }
+
+  // 1. Exact match within the same application (re-upload of existing file).
+  const { rows: appRows } = await pool.query(
+    'SELECT * FROM programs WHERE name = $1 AND application_id = $2 LIMIT 1',
+    [name, applicationId]
+  )
+  if (appRows[0]) return appRows[0]
+
+  // 2. Adopt a pending phantom (dependency placeholder with no owner).
+  const { rows: phantomRows } = await pool.query(
+    "SELECT * FROM programs WHERE name = $1 AND application_id IS NULL AND status = 'pending' LIMIT 1",
+    [name]
+  )
+  return phantomRows[0] || null
+}
+
 export async function findProgramById(id) {
   const { rows } = await pool.query('SELECT * FROM programs WHERE id = $1', [id])
   return rows[0] || null

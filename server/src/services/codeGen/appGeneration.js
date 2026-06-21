@@ -151,34 +151,6 @@ export async function generateApplicationCached(programIds) {
   return { order, results }
 }
 
-function generateDbStub(language) {
-  if (language === 'typescript') return `\
-// Auto-generated — replace with your actual DB driver
-export const db = {
-  async select<T>(table: string, key: Record<string, unknown>): Promise<T | null> {
-    throw new Error(\`db.select('\${table}') not implemented\`)
-  },
-  async insert<T>(table: string, data: Record<string, unknown>): Promise<T> {
-    throw new Error(\`db.insert('\${table}') not implemented\`)
-  },
-  async update<T>(table: string, data: Record<string, unknown>, key: Record<string, unknown>): Promise<T | null> {
-    throw new Error(\`db.update('\${table}') not implemented\`)
-  },
-  async delete(table: string, key: Record<string, unknown>): Promise<void> {
-    throw new Error(\`db.delete('\${table}') not implemented\`)
-  },
-}
-`
-  return `\
-// Auto-generated — replace with your actual DB driver
-export const db = {
-  async select(table, key) { throw new Error(\`db.select('\${table}') not implemented\`) },
-  async insert(table, data) { throw new Error(\`db.insert('\${table}') not implemented\`) },
-  async update(table, data, key) { throw new Error(\`db.update('\${table}') not implemented\`) },
-  async delete(table, key) { throw new Error(\`db.delete('\${table}') not implemented\`) },
-}
-`
-}
 
 function generateIndex(results) {
   const ok = results.filter(r => r.status === 'ok')
@@ -208,7 +180,6 @@ export async function generateProject(programIds, { includeTests = false } = {})
 
   const typesResult = await generateProgramTypes(programIds)
   files.push({ path: `src/types.${ext}`, content: typesResult.code })
-  files.push({ path: `src/db.${ext}`,    content: generateDbStub(language) })
   files.push({ path: `src/index.${ext}`, content: generateIndex(results) })
 
   if (includeTests) {

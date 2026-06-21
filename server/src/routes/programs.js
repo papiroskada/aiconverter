@@ -6,7 +6,7 @@ import { getAnalysisByProgramId, updateFlag, patchEntryPoints, saveGeneratedCode
 import { upsertFlag, deleteFlag, getFlagsForProgram } from '../models/programFlags.js'
 import { getChunksByProgramId } from '../models/programChunks.js'
 import { uploadAndStartAnalysis, reanalyze, deleteProgram, cancelProgram } from '../services/analysisService.js'
-import { generateEntryPointTests, generateProgram, previewProgram, generateProgramTypes, generateDbTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
+import { generateEntryPointTests, generateProgram, previewProgram, generateProgramTypes, checkConsistency, generateApplication, generateProject } from '../services/codeGen/index.js'
 import { getCallersOf, getCallsFromProgram } from '../models/programCalls.js'
 import { toMarkdown, toOpenApi } from '../services/exportService.js'
 import { buildVerificationReport } from '../services/codeGen/verificationService.js'
@@ -32,16 +32,6 @@ router.post('/program-types', async (req, res, next) => {
     const { programIds } = req.body
     if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
     const result = await generateProgramTypes(programIds)
-    res.json(result)
-  } catch (err) { next(err) }
-})
-
-// POST /api/programs/db-types
-router.post('/db-types', async (req, res, next) => {
-  try {
-    const { programIds } = req.body
-    if (!Array.isArray(programIds)) return res.status(400).json({ error: 'programIds must be array' })
-    const result = await generateDbTypes(programIds)
     res.json(result)
   } catch (err) { next(err) }
 })

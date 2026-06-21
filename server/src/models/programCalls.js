@@ -32,10 +32,23 @@ export async function getCallersOf(calleeName) {
   return rows
 }
 
-export async function backfillCallTargets(callee_name, callee_id) {
-  await pool.query(
-    `UPDATE program_calls SET callee_program_id = $1
-     WHERE callee_name = $2 AND callee_program_id IS NULL`,
-    [callee_id, callee_name]
-  )
+export async function backfillCallTargets(callee_name, callee_id, application_id = null) {
+  if (application_id) {
+    // Only backfill calls whose caller is in the same application (or a phantom).
+    await pool.query(
+      `UPDATE program_calls pc SET callee_program_id = $1
+       FROM programs cp
+       WHERE pc.caller_program_id = cp.id
+         AND pc.callee_name = $2
+         AND pc.callee_program_id IS NULL
+         AND (cp.application_id = $3 OR cp.application_id IS NULL)`,
+      [callee_id, callee_name, application_id]
+    )
+  } else {
+    await pool.query(
+      `UPDATE program_calls SET callee_program_id = $1
+       WHERE callee_name = $2 AND callee_program_id IS NULL`,
+      [callee_id, callee_name]
+    )
+  }
 }
